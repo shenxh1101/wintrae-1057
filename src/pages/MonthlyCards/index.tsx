@@ -1,5 +1,5 @@
 import { useState, useMemo } from 'react';
-import { Plus, Search, RefreshCw, CreditCard, Tag, Pause, Play, FileText, History } from 'lucide-react';
+import { Plus, Search, RefreshCw, CreditCard, Tag, Pause, Play, FileText, History, FileBarChart, Download } from 'lucide-react';
 import dayjs from 'dayjs';
 import DataTable from '@/components/Table/DataTable';
 import BaseModal from '@/components/Modal/BaseModal';
@@ -47,6 +47,16 @@ export default function MonthlyCards() {
   const [renewModal, setRenewModal] = useState<{ open: boolean; card: MonthlyCard | null }>({ open: false, card: null });
   const [renewDays, setRenewDays] = useState<number>(30);
   const [recordsModal, setRecordsModal] = useState<{ open: boolean; card: MonthlyCard | null }>({ open: false, card: null });
+  const [reconModal, setReconModal] = useState<{ open: boolean }>({ open: false });
+  const [reconMonth, setReconMonth] = useState<string>(dayjs().format('YYYY-MM'));
+
+  const reconMonthOptions = useMemo(() => {
+    const months: string[] = [];
+    for (let i = 0; i < 6; i++) {
+      months.push(dayjs().subtract(i, 'month').format('YYYY-MM'));
+    }
+    return months;
+  }, []);
 
   const filteredCards = useMemo(() => {
     return monthlyCards.filter((c) => {
@@ -89,11 +99,19 @@ export default function MonthlyCards() {
 
   const getNewEndDate = () => {
     if (!renewModal.card) return '';
-    return dayjs(renewModal.card.endTime).add(renewDays, 'day').format('YYYY-MM-DD');
+    const startDay = dayjs(renewModal.card.endTime).add(1, 'day');
+    return startDay.add(renewDays - 1, 'day').format('YYYY-MM-DD');
   };
 
   const handleRenew = () => {
-    if (renewModal.card) renewMonthlyCard(renewModal.card.id, renewDays);
+    if (renewModal.card) {
+      const record = renewMonthlyCard(renewModal.card.id, renewDays);
+      if (record) {
+        alert(
+          `续费成功！\n续费时长: ${record.days}天\n续费金额: ¥${record.amount}\n原到期日: ${record.previousEndTime}\n新到期日: ${record.newEndTime}\n操作员: ${record.operator}`
+        );
+      }
+    }
     setRenewModal({ open: false, card: null });
   };
 
@@ -101,6 +119,62 @@ export default function MonthlyCards() {
     const action = card.status === 'suspended' ? '恢复' : '暂停';
     if (window.confirm(`确定${action}月卡 ${card.plateNumber}？`)) toggleCardSuspend(card.id);
   };
+
+  const reconRecords = useMemo(() => {
+    const records: (RenewalRecord & { plateNumber: string; ownerName: string; cardType: CardType })[] = [];
+    monthlyCards.forEach((c) => {
+      if (c.renewalRecords) {
+        c.renewalRecords.forEach((r) => {
+          if (dayjs(r.time).format('YYYY-MM') === reconMonth) {
+            records.push({ ...r, plateNumber: c.plateNumber, ownerName: c.ownerName, cardType: c.cardType });
+          }
+        });
+      }
+    });
+    return records.sort((a, b) => dayjs(b.time).valueOf() - dayjs(a.time).valueOf());
+  }, [monthlyCards, reconMonth]);
+
+  const reconStats = useMemo(() => {
+    const totalOrders = reconRecords.length;
+    const totalAmount = reconRecords.reduce((sum, r) => sum + r.amount, 0);
+    const uniquePlates = new Set(reconRecords.map((r) => r.plateNumber)).size;
+    const avgPrice = totalOrders > 0 ? (totalAmount / totalOrders).toFixed(2) : '0.00';
+    return { totalOrders, totalAmount, uniquePlates, avgPrice };
+  }, [reconRecords]);
+
+  const handleExportRecon = () => {
+    const headers = ['续费时间', '车牌号', '车主', '卡类型', '续费时长(天)', '金额(元)', '原到期日', '新到期日', '操作员'];
+    const rows = reconRecords.map((r) => [
+      formatDate(r.time),
+      r.plateNumber,
+      r.ownerName,
+      cardTypeMap[r.cardType].label,
+      String(r.days),
+      String(r.amount),
+      r.previousEndTime,
+      r.newEndTime,
+      r.operator,
+    ]);
+    const csv = [headers, ...rows].map((row) => row.map((cell) => `"${cell}"`).join(',')).join('\n');
+    const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `续费对账明细_${reconMonth}.csv`;
+    link.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const createPreview = useMemo(() => {
+    const durationDays = createForm.cardType === 'monthly' ? 30 : createForm.cardType === 'quarterly' ? 90 : 365;
+    const start = dayjs(createForm.startTime);
+    const end = start.add(durationDays - 1, 'day');
+    return {
+      start: start.format('YYYY-MM-DD'),
+      end: end.format('YYYY-MM-DD'),
+      days: durationDays,
+    };
+  }, [createForm.cardType, createForm.startTime]);
 
   const columns = [
     { key: 'plateNumber', title: '车牌号', width: '110px', align: 'center' as const },
@@ -203,6 +277,9 @@ export default function MonthlyCards() {
           <button className="btn btn-secondary" onClick={() => { setSearchText(''); setExpiryTab('all'); setListTab('all'); setCurrentPage(1); }}>
             <RefreshCw size={14} className="mr-1" />重置
           </button>
+          <button className="btn btn-secondary" onClick={() => setReconModal({ open: true })}>
+            <FileBarChart size={16} className="mr-1" />续费对账
+          </button>
           <button className="btn btn-accent" onClick={() => { resetCreateForm(); setCreateModal(true); }}>
             <Plus size={16} className="mr-1" />新建月卡
           </button>
@@ -253,6 +330,11 @@ export default function MonthlyCards() {
               onChange={(e) => setCreateForm({ ...createForm, startTime: e.target.value })} />
           </div>
         </div>
+        <div className="mt-4 p-3 bg-gray-50 rounded-md border border-gray-100">
+          <div className="text-xs text-gray-500">
+            有效期预览：开始日期: <span className="text-gray-700 font-medium">{createPreview.start}</span>，结束日期: <span className="text-gray-700 font-medium">{createPreview.end}</span>，共 <span className="text-gray-700 font-medium">{createPreview.days}</span> 天
+          </div>
+        </div>
       </BaseModal>
 
       <BaseModal open={renewModal.open} title="续费月卡" size="sm"
@@ -264,8 +346,8 @@ export default function MonthlyCards() {
         <div className="space-y-4">
           <div className="p-3 bg-gray-50 rounded-md">
             <div className="text-sm text-gray-600">车牌号：<span className="font-medium text-gray-800">{renewModal.card?.plateNumber}</span></div>
-            <div className="text-sm text-gray-600 mt-1">当前有效期止：<span className="font-medium text-gray-800">{formatDate(renewModal.card?.endTime)}</span></div>
-            <div className="text-sm text-gray-600 mt-1">续费后有效期止：<span className="font-medium text-accent-600">{getNewEndDate()}</span></div>
+            <div className="text-sm text-gray-600 mt-1">当前有效期止：<span className="font-medium text-gray-800">{renewModal.card ? dayjs(renewModal.card.endTime).format('YYYY年MM月DD日') : ''}</span></div>
+            <div className="text-sm text-gray-600 mt-1">续费后有效期止：<span className="font-semibold text-green-600 bg-green-50 px-2 py-0.5 rounded">{getNewEndDate() ? dayjs(getNewEndDate()).format('YYYY年MM月DD日') : ''}</span></div>
           </div>
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">选择续费时长</label>
@@ -313,6 +395,71 @@ export default function MonthlyCards() {
             <div>暂无续费记录</div>
           </div>
         )}
+      </BaseModal>
+
+      <BaseModal open={reconModal.open} title="续费对账明细" size="lg"
+        onClose={() => setReconModal({ open: false })}
+        footer={<>
+          <button className="btn btn-secondary" onClick={() => setReconModal({ open: false })}>关闭</button>
+          <button className="btn btn-accent" onClick={handleExportRecon}>
+            <Download size={14} className="mr-1" />导出明细
+          </button>
+        </>}>
+        <div className="space-y-4">
+          <div className="flex items-center gap-3">
+            <label className="text-sm font-medium text-gray-700 w-20">选择月份</label>
+            <select
+              className="input w-40"
+              value={reconMonth}
+              onChange={(e) => setReconMonth(e.target.value)}
+            >
+              {reconMonthOptions.map((m) => (
+                <option key={m} value={m}>{m}</option>
+              ))}
+            </select>
+          </div>
+
+          <div className="grid grid-cols-4 gap-3">
+            <div className="p-4 bg-blue-50 rounded-md border border-blue-100">
+              <div className="text-sm text-blue-600 font-medium">续费单数</div>
+              <div className="mt-1 text-2xl font-bold text-blue-700">{reconStats.totalOrders} <span className="text-sm font-normal">单</span></div>
+            </div>
+            <div className="p-4 bg-green-50 rounded-md border border-green-100">
+              <div className="text-sm text-green-600 font-medium">续费总金额</div>
+              <div className="mt-1 text-2xl font-bold text-green-700">¥{reconStats.totalAmount}</div>
+            </div>
+            <div className="p-4 bg-purple-50 rounded-md border border-purple-100">
+              <div className="text-sm text-purple-600 font-medium">续费月卡</div>
+              <div className="mt-1 text-2xl font-bold text-purple-700">{reconStats.uniquePlates} <span className="text-sm font-normal">张</span></div>
+            </div>
+            <div className="p-4 bg-orange-50 rounded-md border border-orange-100">
+              <div className="text-sm text-orange-600 font-medium">平均单价</div>
+              <div className="mt-1 text-2xl font-bold text-orange-700">¥{reconStats.avgPrice}</div>
+            </div>
+          </div>
+
+          <div>
+            <DataTable
+              columns={[
+                { key: 'time', title: '续费时间', width: '150px', align: 'center' as const, render: (r: any) => formatDate(r.time) },
+                { key: 'plateNumber', title: '车牌号', width: '100px', align: 'center' as const },
+                { key: 'ownerName', title: '车主', width: '90px', align: 'center' as const },
+                { key: 'cardType', title: '卡类型', width: '100px', align: 'center' as const, render: (r: any) => cardTypeMap[r.cardType].label },
+                { key: 'days', title: '续费时长', width: '90px', align: 'center' as const, render: (r: any) => `${r.days}天` },
+                { key: 'amount', title: '金额', width: '90px', align: 'center' as const, render: (r: any) => <span className="text-accent-600 font-medium">¥{r.amount}</span> },
+                { key: 'previousEndTime', title: '原到期日', width: '110px', align: 'center' as const },
+                { key: 'newEndTime', title: '新到期日', width: '110px', align: 'center' as const },
+                { key: 'operator', title: '操作员', width: '90px', align: 'center' as const },
+              ]}
+              data={reconRecords}
+              rowKey={(r: any) => r.id}
+              currentPage={1}
+              total={reconRecords.length}
+              pageSize={50}
+              onPageChange={() => {}}
+            />
+          </div>
+        </div>
       </BaseModal>
     </div>
   );

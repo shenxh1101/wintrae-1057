@@ -1,6 +1,6 @@
 import { useState, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { AlertTriangle, Clock, CheckCircle, Users, RefreshCw, Bell, Send, Pencil, FileText } from 'lucide-react';
+import { AlertTriangle, Clock, CheckCircle, Users, RefreshCw, Bell, Send, Pencil, FileText, MapPin } from 'lucide-react';
 import DataTable from '@/components/Table/DataTable';
 import BaseModal from '@/components/Modal/BaseModal';
 import { useAppStore } from '@/store';
@@ -11,14 +11,25 @@ import {
   deviceStatusMap,
   formatDateTime,
 } from '@/utils';
-import type { ExceptionOrder, ExceptionStatus, ExceptionType, Device } from '@/types';
+import type { ExceptionOrder, ExceptionStatus, ExceptionType, Device, ParkingSpace, ParkingOrder } from '@/types';
 
 const PAGE_SIZE = 10;
 const ASSIGNEES = ['客服小王', '客服小李', '运维小张', '管理员'];
 
 export default function Exceptions() {
   const navigate = useNavigate();
-  const { exceptionOrders, devices, parkingSpaces, updateExceptionStatus, correctExceptionPlate, setSearchPlate } = useAppStore();
+  const {
+    exceptionOrders,
+    devices,
+    parkingSpaces,
+    buildings,
+    parkingOrders,
+    updateExceptionStatus,
+    correctExceptionPlate,
+    setSearchPlate,
+    setSelectedBuilding,
+    setSelectedFloor,
+  } = useAppStore();
 
   const [filterType, setFilterType] = useState<ExceptionType | ''>('');
   const [filterStatus, setFilterStatus] = useState<ExceptionStatus | ''>('');
@@ -90,13 +101,31 @@ export default function Exceptions() {
   const handlePlateCorrect = () => {
     if (plateCorrectModal.order && correctedPlate.trim()) {
       const plate = correctedPlate.trim();
-      const orderId = plateCorrectModal.order.id;
-      correctExceptionPlate(orderId, plate);
-      updateExceptionStatus(orderId, 'processing');
+      const excOrderId = plateCorrectModal.order.id;
+      const excSpaceNo = plateCorrectModal.order.spaceNo;
+      const existingOrderId = plateCorrectModal.order.orderId;
+
+      correctExceptionPlate(excOrderId, plate);
+      updateExceptionStatus(excOrderId, 'processing');
+      setSearchPlate(plate);
+
       setTimeout(() => {
-        const space = parkingSpaces.find(s => s.spaceNo === plateCorrectModal.order?.spaceNo);
-        const synced = space?.plateNumber === plate;
-        alert(`补录成功：新车牌已同步到订单、车位地图${synced ? '' : '（车位同步验证中）'}`);
+        const state = useAppStore.getState();
+        const updatedExc = state.exceptionOrders.find((e) => e.id === excOrderId);
+        let matchedOrderId = existingOrderId || updatedExc?.orderId;
+
+        if (!matchedOrderId && excSpaceNo) {
+          const matchedOrder = state.parkingOrders.find(
+            (o: ParkingOrder) => o.spaceNo === excSpaceNo && o.plateNumber === plate
+          );
+          matchedOrderId = matchedOrder?.id;
+        }
+
+        let msg = '补录成功\n已同步：订单中心、车位地图、异常单状态→处理中';
+        if (matchedOrderId) {
+          msg += `\n关联订单号: ${matchedOrderId}`;
+        }
+        alert(msg);
       }, 50);
     }
     setPlateCorrectModal({ open: false, order: null });
@@ -116,13 +145,50 @@ export default function Exceptions() {
     }
   };
 
-  const handleViewOrder = (plateNumber: string) => {
+  const handleViewOrder = (plateNumber: string, order?: ExceptionOrder) => {
     setSearchPlate(plateNumber);
+    if (order?.spaceNo) {
+      const space = parkingSpaces.find((s: ParkingSpace) => s.spaceNo === order.spaceNo);
+      if (space?.buildingId) {
+        setSelectedBuilding(space.buildingId);
+      }
+    }
     navigate('/orders');
   };
 
   const handleNotify = (device: Device) => {
     alert(`已通知运维人员处理设备：${device.name}`);
+  };
+
+  const handleViewSpace = (order: ExceptionOrder) => {
+    if (!order.spaceNo) return;
+    const space = parkingSpaces.find((s: ParkingSpace) => s.spaceNo === order.spaceNo);
+    if (order.plateNumber) {
+      setSearchPlate(order.plateNumber);
+    }
+    if (space) {
+      if (space.buildingId) {
+        setSelectedBuilding(space.buildingId);
+      }
+      if (space.floor !== undefined && space.floor !== null) {
+        setSelectedFloor(space.floor);
+      }
+    }
+    navigate('/parking-map');
+  };
+
+  const handleJumpToOrder = (orderId: string, plateNumber?: string) => {
+    if (plateNumber) {
+      setSearchPlate(plateNumber);
+    }
+    const order = parkingOrders.find((o: ParkingOrder) => o.id === orderId);
+    if (order?.spaceNo) {
+      const space = parkingSpaces.find((s: ParkingSpace) => s.spaceNo === order.spaceNo);
+      if (space?.buildingId) {
+        setSelectedBuilding(space.buildingId);
+      }
+    }
+    navigate('/orders');
   };
 
   const columns = [
@@ -133,18 +199,38 @@ export default function Exceptions() {
       width: '120px',
       render: (o: ExceptionOrder) => exceptionTypeMap[o.type],
     },
-    { key: 'plateNumber', title: '车牌号', width: '100px', align: 'center' as const, render: (o: ExceptionOrder) => {
+    { key: 'plateNumber', title: '车牌号', width: '140px', align: 'center' as const, render: (o: ExceptionOrder) => {
       if (!o.plateNumber || o.plateNumber === '-') {
         return <span className="text-xs font-medium text-red-600 bg-red-50 px-2 py-0.5 rounded">未识别</span>;
       }
-      return o.plateNumber;
+      const isCorrected = o.type === 'unrecognized_plate';
+      return (
+        <div className="flex items-center justify-center gap-1.5">
+          <span>{o.plateNumber}</span>
+          {isCorrected && (
+            <span className="text-xs font-medium text-green-700 bg-green-100 px-1.5 py-0.5 rounded">已补录</span>
+          )}
+        </div>
+      );
     }},
     { key: 'spaceNo', title: '车位号', width: '100px', align: 'center' as const, render: (o: ExceptionOrder) => o.spaceNo || '-' },
     { key: 'description', title: '描述', render: (o: ExceptionOrder) => {
-      if (o.type === 'unrecognized_plate' && o.plateNumber && o.plateNumber !== '-') {
-        return <span className="text-green-600 font-medium">车牌已补录：{o.plateNumber}</span>;
-      }
-      return o.description;
+      const mainDesc = (o.type === 'unrecognized_plate' && o.plateNumber && o.plateNumber !== '-')
+        ? <span className="text-green-600 font-medium">车牌已补录：{o.plateNumber}</span>
+        : o.description;
+      return (
+        <div className="space-y-1">
+          <div>{mainDesc}</div>
+          {o.orderId && (
+            <div
+              className="text-xs text-gray-500 cursor-pointer hover:text-indigo-600 transition-colors"
+              onClick={() => handleJumpToOrder(o.orderId!, o.plateNumber)}
+            >
+              关联订单: {o.orderId}
+            </div>
+          )}
+        </div>
+      );
     }},
     { key: 'createTime', title: '创建时间', width: '160px', render: (o: ExceptionOrder) => formatDateTime(o.createTime) },
     { key: 'assignee', title: '处理人', width: '90px', align: 'center' as const, render: (o: ExceptionOrder) => o.assignee || '-' },
@@ -163,7 +249,7 @@ export default function Exceptions() {
     {
       key: 'actions',
       title: '操作',
-      width: '360px',
+      width: '420px',
       align: 'center' as const,
       render: (o: ExceptionOrder) => (
         <div className="flex items-center justify-center gap-1 flex-wrap">
@@ -173,8 +259,13 @@ export default function Exceptions() {
             </button>
           )}
           {o.plateNumber && o.plateNumber !== '-' && (
-            <button className="btn btn-ghost text-indigo-600 hover:text-indigo-700" onClick={() => handleViewOrder(o.plateNumber!)}>
+            <button className="btn btn-ghost text-indigo-600 hover:text-indigo-700" onClick={() => handleViewOrder(o.plateNumber!, o)}>
               <FileText size={14} className="mr-1" />查看关联订单
+            </button>
+          )}
+          {o.spaceNo && (
+            <button className="btn btn-ghost text-amber-600 hover:text-amber-700" onClick={() => handleViewSpace(o)}>
+              <MapPin size={14} className="mr-1" />查看车位
             </button>
           )}
           <button className="btn btn-ghost text-accent-600 hover:text-accent-700" onClick={() => openReassignModal(o)}>

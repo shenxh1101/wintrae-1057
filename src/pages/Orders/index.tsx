@@ -1,5 +1,6 @@
 import { useState, useMemo } from 'react';
 import { RefreshCw, Filter, DollarSign, FileText, Ticket, Download, History } from 'lucide-react';
+import dayjs from 'dayjs';
 import DataTable from '@/components/Table/DataTable';
 import BaseModal from '@/components/Modal/BaseModal';
 import { useAppStore } from '@/store';
@@ -33,6 +34,7 @@ export default function Orders() {
   const [couponModal, setCouponModal] = useState<{ open: boolean; order: ParkingOrder | null }>({ open: false, order: null });
   const [selectedCouponId, setSelectedCouponId] = useState<string>('');
   const [detailModal, setDetailModal] = useState<{ open: boolean; order: ParkingOrder | null }>({ open: false, order: null });
+  const [logFilter, setLogFilter] = useState<string>('all');
 
   const filteredOrders = useMemo(() => {
     return parkingOrders.filter((o) => {
@@ -65,28 +67,47 @@ export default function Orders() {
   };
 
   const handleExport = () => {
-    const headers = ['订单号','车牌号','车位','楼栋','入场时间','出场时间','费用','已付','状态','优惠券','备注','操作流水'];
-    const rows = filteredOrders.map((o) => [
-      o.id,
-      o.plateNumber,
-      o.spaceNo,
-      o.buildingName,
-      formatDateTime(o.enterTime),
-      o.exitTime ? formatDateTime(o.exitTime) : '',
-      o.totalFee,
-      o.paidFee,
-      orderStatusMap[o.status].label,
-      o.couponRecords?.map((r) => r.couponName).join(';') || '',
-      o.remark || '',
-      o.operationLogs?.map((log) => log.detail).join(';') || '',
-    ]);
-    const csv = [headers, ...rows].map((r) => r.join(',')).join('\n');
+    const headers = ['订单号','车牌号','车位','车场','楼栋','入场时间','出场时间','费用','已付','支付方式','状态','优惠券','备注','操作人汇总','操作时间汇总','操作动作汇总'];
+    const rows = filteredOrders.map((o) => {
+      const operators = o.operationLogs ? [...new Set(o.operationLogs.map((log) => log.operator))].join(';') : '';
+      const timeSummary = o.operationLogs ? o.operationLogs.map((log) => `${log.action}:${dayjs(log.time).format('YYYY-MM-DD HH:mm:ss')}`).join(';') : '';
+      const actionSummary = o.operationLogs ? o.operationLogs.map((log) => log.detail).join(';') : '';
+      return [
+        o.id,
+        o.plateNumber,
+        o.spaceNo,
+        o.lotName || '',
+        o.buildingName,
+        formatDateTime(o.enterTime),
+        o.exitTime ? formatDateTime(o.exitTime) : '',
+        o.totalFee,
+        o.paidFee,
+        o.paymentMethod ? paymentMethodMap[o.paymentMethod] : '',
+        orderStatusMap[o.status].label,
+        o.couponRecords?.map((r) => r.couponName).join(';') || '',
+        o.remark || '',
+        operators,
+        timeSummary,
+        actionSummary,
+      ];
+    });
+    const infoLine = `导出时间: ${new Date().toLocaleString('zh-CN')}, 共${filteredOrders.length}条订单`;
+    const csv = [infoLine, headers, ...rows].map((r) => Array.isArray(r) ? r.join(',') : r).join('\n');
     const BOM = '\uFEFF';
     const blob = new Blob([BOM + csv], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
+
+    const filterParts: string[] = [];
+    const building = buildings.find((b) => b.id === buildingId);
+    if (building) filterParts.push(building.name);
+    if (status) filterParts.push(orderStatusMap[status as OrderStatus]?.label || status);
+    if (searchPlate) filterParts.push(searchPlate);
+    const filterSuffix = filterParts.length > 0 ? `_${filterParts.join('_').replace(/[\\/:*?"<>|]/g, '')}` : '';
+    const fileName = `orders_${dayjs().format('YYYYMMDD')}${filterSuffix}.csv`;
+
     const a = document.createElement('a');
     a.href = url;
-    a.download = `orders_${new Date().toISOString().slice(0, 10)}.csv`;
+    a.download = fileName;
     a.click();
     URL.revokeObjectURL(url);
   };
@@ -105,7 +126,7 @@ export default function Orders() {
 
   const openRemarkModal = (order: ParkingOrder) => {
     setRemarkModal({ open: true, order });
-    setRemarkText(order.remark || '');
+    setRemarkText('');
   };
 
   const handleSaveRemark = () => {
@@ -122,6 +143,7 @@ export default function Orders() {
 
   const openDetailModal = (order: ParkingOrder) => {
     setDetailModal({ open: true, order });
+    setLogFilter('all');
   };
 
   const handleSendCoupon = () => {
@@ -140,7 +162,23 @@ export default function Orders() {
 
   const columns = [
     { key: 'id', title: '订单号', width: '130px' },
-    { key: 'plateNumber', title: '车牌号', width: '100px', align: 'center' as const },
+    {
+      key: 'plateNumber',
+      title: '车牌号',
+      width: '140px',
+      align: 'center' as const,
+      render: (o: ParkingOrder) => {
+        const hasPlateCorrect = o.operationLogs?.filter((log) => log.action === 'plate_correct').length ?? 0 > 0;
+        return (
+          <div className="flex items-center justify-center gap-1 flex-wrap">
+            <span>{o.plateNumber}</span>
+            {hasPlateCorrect && (
+              <span className="tag bg-blue-100 text-blue-700 text-xs px-1.5 py-0.5">已修正</span>
+            )}
+          </div>
+        );
+      },
+    },
     { key: 'spaceNo', title: '车位', width: '100px', align: 'center' as const },
     { key: 'buildingName', title: '楼栋', width: '80px', align: 'center' as const },
     { key: 'enterTime', title: '入场时间', width: '160px', render: (o: ParkingOrder) => formatDateTime(o.enterTime) },
@@ -277,12 +315,20 @@ export default function Orders() {
           </>
         }
       >
-        <textarea
-          className="input min-h-[120px] resize-y"
-          placeholder="请输入备注内容..."
-          value={remarkText}
-          onChange={(e) => setRemarkText(e.target.value)}
-        />
+        <div className="space-y-3">
+          {remarkModal.order?.remark && (
+            <div className="bg-gray-100 rounded-md p-3 border border-gray-200">
+              <div className="text-xs text-gray-500 mb-1">原有备注：</div>
+              <pre className="text-sm text-gray-700 whitespace-pre-wrap font-sans m-0">{remarkModal.order.remark}</pre>
+            </div>
+          )}
+          <textarea
+            className="input min-h-[120px] resize-y"
+            placeholder="请输入备注内容（将追加到原有备注末尾）"
+            value={remarkText}
+            onChange={(e) => setRemarkText(e.target.value)}
+          />
+        </div>
       </BaseModal>
 
       <BaseModal
@@ -315,10 +361,10 @@ export default function Orders() {
         open={detailModal.open}
         title={`订单详情 - ${detailModal.order?.id || ''}`}
         size="lg"
-        onClose={() => setDetailModal({ open: false, order: null })}
+        onClose={() => { setDetailModal({ open: false, order: null }); setLogFilter('all'); }}
         footer={
           <>
-            <button className="btn btn-accent" onClick={() => setDetailModal({ open: false, order: null })}>关闭</button>
+            <button className="btn btn-accent" onClick={() => { setDetailModal({ open: false, order: null }); setLogFilter('all'); }}>关闭</button>
           </>
         }
       >
@@ -385,10 +431,35 @@ export default function Orders() {
             </div>
 
             <div>
-              <h3 className="font-semibold text-gray-800 mb-4">操作流水</h3>
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="font-semibold text-gray-800">操作流水</h3>
+                <div className="flex items-center gap-1 flex-wrap">
+                  {[
+                    { key: 'all', label: '全部' },
+                    { key: 'refund', label: '退款' },
+                    { key: 'pay', label: '补缴' },
+                    { key: 'coupon', label: '发券' },
+                    { key: 'remark', label: '备注' },
+                    { key: 'plate_correct', label: '车牌修正' },
+                  ].map((tab) => (
+                    <button
+                      key={tab.key}
+                      className={`px-3 py-1 text-xs rounded-full transition-colors ${
+                        logFilter === tab.key
+                          ? 'bg-accent-600 text-white'
+                          : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                      }`}
+                      onClick={() => setLogFilter(tab.key)}
+                    >
+                      {tab.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
               {detailModal.order.operationLogs && detailModal.order.operationLogs.length > 0 ? (
                 <div className="space-y-2">
                   {[...detailModal.order.operationLogs]
+                    .filter((log) => logFilter === 'all' || log.action === logFilter)
                     .sort((a, b) => new Date(b.time).getTime() - new Date(a.time).getTime())
                     .map((log) => {
                       const actionInfo = OPERATION_ACTION_MAP[log.action] || { label: log.action, className: 'bg-gray-100 text-gray-700' };

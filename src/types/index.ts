@@ -89,6 +89,7 @@ export interface MonthlyCard {
   lotId?: string;
   lotName?: string;
   renewalRecords?: RenewalRecord[];
+  remark?: string;
 }
 
 export interface ExceptionOrder {

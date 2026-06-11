@@ -25,7 +25,7 @@ import type {
   ParkingLot,
 } from '@/types';
 
-const STORAGE_KEY = 'smart-parking-state';
+const STORAGE_KEY = 'smart-parking-state-v2';
 
 interface PersistedState {
   parkingOrders: ParkingOrder[];
@@ -84,13 +84,13 @@ interface AppState {
   setSelectedFloor: (floor: number | null) => void;
   setSearchPlate: (p: string) => void;
 
-  updateOrderStatus: (id: string, status: ParkingOrder['status'], paidFee?: number, remark?: string) => void;
+  updateOrderStatus: (id: string, status: ParkingOrder['status'], paidFee?: number) => void;
   addOrderRemark: (id: string, remark: string) => void;
   issueCoupon: (id: string, record: CouponRecord) => void;
   updateExceptionStatus: (id: string, status: ExceptionOrder['status'], assignee?: string) => void;
   correctExceptionPlate: (id: string, plateNumber: string) => void;
   addMonthlyCard: (card: Omit<MonthlyCard, 'id'>) => void;
-  renewMonthlyCard: (id: string, days: number) => void;
+  renewMonthlyCard: (id: string, days: number) => RenewalRecord | null;
   updateCardListType: (id: string, listType: MonthlyCard['listType']) => void;
   toggleCardSuspend: (id: string) => void;
   resetData: () => void;
@@ -127,13 +127,13 @@ export const useAppStore = create<AppState>((set, get) => ({
   setSelectedFloor: (floor) => set({ selectedFloor: floor }),
   setSearchPlate: (p) => set({ searchPlate: p }),
 
-  updateOrderStatus: (id, status, paidFee, remark) => {
+  updateOrderStatus: (id, status, paidFee) => {
     const action = status === 'refunded' ? 'refund' : status === 'paid' ? 'pay' : 'remark';
-    const detail = status === 'refunded' ? '订单退款' : status === 'paid' ? '订单补缴' : remark || '状态更新';
+    const detail = status === 'refunded' ? '订单退款' : status === 'paid' ? '订单补缴' : '状态更新';
 
     const parkingOrders = get().parkingOrders.map((o) => {
       if (o.id !== id) return o;
-      let updated: ParkingOrder = { ...o, status, paidFee: paidFee ?? o.paidFee, remark: remark ?? o.remark };
+      let updated: ParkingOrder = { ...o, status, paidFee: paidFee ?? o.paidFee };
       updated = addLog(updated, { action, operator: CURRENT_OPERATOR, detail });
       return updated;
     });
@@ -150,8 +150,10 @@ export const useAppStore = create<AppState>((set, get) => ({
   addOrderRemark: (id, remark) => {
     const parkingOrders = get().parkingOrders.map((o) => {
       if (o.id !== id) return o;
-      let updated: ParkingOrder = { ...o, remark };
-      updated = addLog(updated, { action: 'remark', operator: CURRENT_OPERATOR, detail: `备注: ${remark}` });
+      const existingRemark = o.remark ? `${o.remark}\n` : '';
+      const newRemark = `${existingRemark}[${CURRENT_OPERATOR} ${new Date().toLocaleString('zh-CN')}] ${remark}`;
+      let updated: ParkingOrder = { ...o, remark: newRemark };
+      updated = addLog(updated, { action: 'remark', operator: CURRENT_OPERATOR, detail: remark });
       return updated;
     });
     savePersisted({
@@ -199,10 +201,12 @@ export const useAppStore = create<AppState>((set, get) => ({
     );
     let parkingOrders = get().parkingOrders;
     let parkingSpaces = get().parkingSpaces;
+    let matchingOrderId: string | undefined;
 
     const exc = exceptionOrders.find((e) => e.id === id);
     if (exc) {
       if (exc.orderId) {
+        matchingOrderId = exc.orderId;
         parkingOrders = parkingOrders.map((o) => {
           if (o.id !== exc.orderId) return o;
           let updated: ParkingOrder = { ...o, plateNumber };
@@ -217,6 +221,8 @@ export const useAppStore = create<AppState>((set, get) => ({
         parkingOrders = parkingOrders.map((o) => {
           if (o.plateNumber || !exc) return o;
           if (exc.spaceNo && o.spaceNo === exc.spaceNo && o.status === 'exception') {
+            matchingOrderId = o.id;
+            exceptionOrders = exceptionOrders.map(e => e.id === id ? { ...e, orderId: o.id } : e);
             let updated: ParkingOrder = { ...o, plateNumber };
             updated = addLog(updated, {
               action: 'plate_correct',
@@ -239,12 +245,22 @@ export const useAppStore = create<AppState>((set, get) => ({
       }
     }
 
+    exceptionOrders = exceptionOrders.map(e =>
+      e.id === id ? { ...e, status: 'processing' as const, orderId: matchingOrderId ?? e.orderId } : e
+    );
+
     savePersisted({ parkingOrders, monthlyCards: get().monthlyCards, exceptionOrders, parkingSpaces });
     set({ exceptionOrders, parkingOrders, parkingSpaces });
   },
 
   addMonthlyCard: (card) => {
-    const monthlyCards = [{ ...card, id: `MC${Date.now()}` }, ...get().monthlyCards];
+    const b = get().buildings.find(b => b.name === card.buildingName);
+    const monthlyCards = [{
+      ...card,
+      id: `MC${Date.now()}`,
+      lotId: b?.lotId,
+      lotName: b?.lotName,
+    }, ...get().monthlyCards];
     savePersisted({
       parkingOrders: get().parkingOrders,
       monthlyCards,
@@ -258,12 +274,14 @@ export const useAppStore = create<AppState>((set, get) => ({
     const renewalPrices: Record<number, number> = { 30: 300, 90: 800, 365: 3000 };
     const amount = renewalPrices[days] || Math.ceil(days / 30) * 100;
 
+    let resultRecord: RenewalRecord | null = null;
+
     const monthlyCards = get().monthlyCards.map((c) => {
       if (c.id !== id) return c;
       const start = new Date(c.endTime);
       start.setDate(start.getDate() + 1);
       const end = new Date(start);
-      end.setDate(end.getDate() + days);
+      end.setDate(end.getDate() + days - 1);
       const previousEndTime = c.endTime;
       const newEndTime = end.toISOString().slice(0, 10);
       const renewalRecord: RenewalRecord = {
@@ -276,6 +294,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         operator: CURRENT_OPERATOR,
         time: new Date().toISOString(),
       };
+      resultRecord = renewalRecord;
       const renewalRecords = [...(c.renewalRecords || []), renewalRecord];
       return {
         ...c,
@@ -292,6 +311,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       parkingSpaces: get().parkingSpaces,
     });
     set({ monthlyCards });
+    return resultRecord;
   },
 
   updateCardListType: (id, listType) => {
