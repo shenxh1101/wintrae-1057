@@ -1,14 +1,20 @@
 import { useState, useMemo } from 'react';
-import { Plus, Search, RefreshCw, CreditCard, Tag, Pause, Play } from 'lucide-react';
+import { Plus, Search, RefreshCw, CreditCard, Tag, Pause, Play, FileText, History } from 'lucide-react';
 import dayjs from 'dayjs';
 import DataTable from '@/components/Table/DataTable';
 import BaseModal from '@/components/Modal/BaseModal';
 import { useAppStore } from '@/store';
 import { cardTypeMap, cardStatusMap, listTypeMap, formatDate } from '@/utils';
-import type { MonthlyCard, CardType } from '@/types';
+import type { MonthlyCard, CardType, RenewalRecord } from '@/types';
 
 const PAGE_SIZE = 10;
-const TABS = [
+const EXPIRY_TABS = [
+  { key: 'all', label: '全部' },
+  { key: 'expiring', label: '快到期' },
+  { key: 'expired', label: '已过期' },
+  { key: 'suspended', label: '已暂停' },
+];
+const LIST_TABS = [
   { key: 'all', label: '全部' },
   { key: 'whitelist', label: '白名单' },
   { key: 'blacklist', label: '黑名单' },
@@ -19,9 +25,18 @@ const RENEW_OPTIONS = [
   { days: 365, label: '365天' },
 ];
 
+const getExpiryStatus = (c: MonthlyCard) => {
+  const today = dayjs();
+  if (c.status === 'suspended') return 'suspended';
+  if (dayjs(c.endTime).isBefore(today, 'day')) return 'expired';
+  if (dayjs(c.endTime).isBefore(today.add(7, 'day'), 'day') && c.status === 'active') return 'expiring';
+  return 'normal';
+};
+
 export default function MonthlyCards() {
   const { monthlyCards, buildings, addMonthlyCard, renewMonthlyCard, updateCardListType, toggleCardSuspend } = useAppStore();
-  const [activeTab, setActiveTab] = useState<string>('all');
+  const [expiryTab, setExpiryTab] = useState<string>('all');
+  const [listTab, setListTab] = useState<string>('all');
   const [searchText, setSearchText] = useState<string>('');
   const [currentPage, setCurrentPage] = useState<number>(1);
   const [createModal, setCreateModal] = useState<boolean>(false);
@@ -31,18 +46,21 @@ export default function MonthlyCards() {
   });
   const [renewModal, setRenewModal] = useState<{ open: boolean; card: MonthlyCard | null }>({ open: false, card: null });
   const [renewDays, setRenewDays] = useState<number>(30);
+  const [recordsModal, setRecordsModal] = useState<{ open: boolean; card: MonthlyCard | null }>({ open: false, card: null });
 
   const filteredCards = useMemo(() => {
     return monthlyCards.filter((c) => {
-      if (activeTab === 'whitelist' && c.listType !== 'whitelist') return false;
-      if (activeTab === 'blacklist' && c.listType !== 'blacklist') return false;
+      const expiryStatus = getExpiryStatus(c);
+      if (expiryTab !== 'all' && expiryStatus !== expiryTab) return false;
+      if (listTab === 'whitelist' && c.listType !== 'whitelist') return false;
+      if (listTab === 'blacklist' && c.listType !== 'blacklist') return false;
       if (searchText) {
         const s = searchText.toLowerCase();
         if (!c.plateNumber.toLowerCase().includes(s) && !c.ownerName.toLowerCase().includes(s)) return false;
       }
       return true;
     });
-  }, [monthlyCards, activeTab, searchText]);
+  }, [monthlyCards, expiryTab, listTab, searchText]);
 
   const pagedData = useMemo(() => {
     const start = (currentPage - 1) * PAGE_SIZE;
@@ -88,10 +106,23 @@ export default function MonthlyCards() {
     { key: 'plateNumber', title: '车牌号', width: '110px', align: 'center' as const },
     { key: 'ownerName', title: '车主姓名', width: '90px', align: 'center' as const },
     { key: 'phone', title: '手机号', width: '120px', align: 'center' as const },
-    { key: 'cardType', title: '卡类型', width: '90px', align: 'center' as const, render: (c: MonthlyCard) => cardTypeMap[c.cardType].label },
+    { key: 'cardType', title: '卡类型', width: '110px', align: 'center' as const, render: (c: MonthlyCard) => (
+      <div className="flex items-center justify-center gap-1">
+        <span>{cardTypeMap[c.cardType].label}</span>
+        {c.renewalRecords && c.renewalRecords.length > 0 && (
+          <History size={12} className="text-gray-400" />
+        )}
+      </div>
+    )},
     { key: 'buildingName', title: '所属楼栋', width: '90px', align: 'center' as const },
     { key: 'startTime', title: '有效期起', width: '110px', align: 'center' as const, render: (c: MonthlyCard) => formatDate(c.startTime) },
     { key: 'endTime', title: '有效期止', width: '110px', align: 'center' as const, render: (c: MonthlyCard) => formatDate(c.endTime) },
+    { key: 'expiryAlert', title: '到期提醒', width: '90px', align: 'center' as const, render: (c: MonthlyCard) => {
+      const status = getExpiryStatus(c);
+      if (status === 'expiring') return <span className="tag bg-orange-100 text-orange-700">快到期</span>;
+      if (status === 'expired') return <span className="tag bg-red-100 text-red-700">已过期</span>;
+      return null;
+    }},
     { key: 'status', title: '卡状态', width: '90px', align: 'center' as const, render: (c: MonthlyCard) => {
       const s = cardStatusMap[c.status];
       return <span className={`tag ${s.bg} ${s.color}`}>{s.label}</span>;
@@ -100,13 +131,16 @@ export default function MonthlyCards() {
       const s = listTypeMap[c.listType];
       return <span className={`tag ${s.bg} ${s.color}`}>{s.label}</span>;
     }},
-    { key: 'actions', title: '操作', width: '320px', align: 'center' as const, render: (c: MonthlyCard) => (
+    { key: 'actions', title: '操作', width: '400px', align: 'center' as const, render: (c: MonthlyCard) => (
       <div className="flex items-center justify-center gap-1 flex-wrap">
         {c.status !== 'suspended' && (
           <button className="btn btn-ghost text-accent-600 hover:text-accent-700" onClick={() => setRenewModal({ open: true, card: c })}>
             <CreditCard size={14} className="mr-1" />续费
           </button>
         )}
+        <button className="btn btn-ghost text-gray-600 hover:text-gray-700" onClick={() => setRecordsModal({ open: true, card: c })}>
+          <FileText size={14} className="mr-1" />续费记录
+        </button>
         <div className="relative group">
           <button className="btn btn-ghost"><Tag size={14} className="mr-1" />设置名单</button>
           <div className="absolute right-0 top-full mt-1 bg-white border border-gray-200 rounded-md shadow-lg py-1 z-10 hidden group-hover:block min-w-[100px]">
@@ -129,18 +163,34 @@ export default function MonthlyCards() {
   return (
     <div>
       <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
-        <div className="flex items-center gap-2">
-          {TABS.map((t) => (
-            <button
-              key={t.key}
-              className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${
-                activeTab === t.key ? 'bg-accent-500 text-white' : 'bg-white text-gray-600 hover:bg-gray-100 border border-gray-200'
-              }`}
-              onClick={() => { setActiveTab(t.key); setCurrentPage(1); }}
-            >
-              {t.label}
-            </button>
-          ))}
+        <div className="flex items-center gap-4 flex-wrap">
+          <div className="flex items-center gap-2">
+            {EXPIRY_TABS.map((t) => (
+              <button
+                key={t.key}
+                className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${
+                  expiryTab === t.key ? 'bg-accent-500 text-white' : 'bg-white text-gray-600 hover:bg-gray-100 border border-gray-200'
+                }`}
+                onClick={() => { setExpiryTab(t.key); setCurrentPage(1); }}
+              >
+                {t.label}
+              </button>
+            ))}
+          </div>
+          <div className="w-px h-6 bg-gray-200" />
+          <div className="flex items-center gap-2">
+            {LIST_TABS.map((t) => (
+              <button
+                key={t.key}
+                className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${
+                  listTab === t.key ? 'bg-accent-500 text-white' : 'bg-white text-gray-600 hover:bg-gray-100 border border-gray-200'
+                }`}
+                onClick={() => { setListTab(t.key); setCurrentPage(1); }}
+              >
+                {t.label}
+              </button>
+            ))}
+          </div>
         </div>
         <div className="flex items-center gap-2">
           <div className="relative">
@@ -150,7 +200,7 @@ export default function MonthlyCards() {
               value={searchText} onChange={(e) => { setSearchText(e.target.value); setCurrentPage(1); }}
             />
           </div>
-          <button className="btn btn-secondary" onClick={() => { setSearchText(''); setActiveTab('all'); setCurrentPage(1); }}>
+          <button className="btn btn-secondary" onClick={() => { setSearchText(''); setExpiryTab('all'); setListTab('all'); setCurrentPage(1); }}>
             <RefreshCw size={14} className="mr-1" />重置
           </button>
           <button className="btn btn-accent" onClick={() => { resetCreateForm(); setCreateModal(true); }}>
@@ -233,6 +283,36 @@ export default function MonthlyCards() {
             </div>
           </div>
         </div>
+      </BaseModal>
+
+      <BaseModal open={recordsModal.open} title={`续费记录 - ${recordsModal.card?.plateNumber || ''}`} size="md"
+        onClose={() => setRecordsModal({ open: false, card: null })}
+        footer={<>
+          <button className="btn btn-secondary" onClick={() => setRecordsModal({ open: false, card: null })}>关闭</button>
+        </>}>
+        {recordsModal.card?.renewalRecords && recordsModal.card.renewalRecords.length > 0 ? (
+          <div className="space-y-3 max-h-96 overflow-y-auto">
+            {[...recordsModal.card.renewalRecords].sort((a, b) => dayjs(b.time).valueOf() - dayjs(a.time).valueOf()).map((r: RenewalRecord) => (
+              <div key={r.id} className="p-4 bg-gray-50 rounded-md border border-gray-100">
+                <div className="flex justify-between items-start mb-2">
+                  <div className="text-sm font-medium text-gray-800">续费时间：{formatDate(r.time)}</div>
+                  <div className="text-sm font-medium text-accent-600">¥{r.amount}</div>
+                </div>
+                <div className="grid grid-cols-2 gap-2 text-sm text-gray-600">
+                  <div>续费时长：<span className="text-gray-800">{r.days}天</span></div>
+                  <div>操作员：<span className="text-gray-800">{r.operator}</span></div>
+                  <div>原到期日：<span className="text-gray-800">{formatDate(r.previousEndTime)}</span></div>
+                  <div>新到期日：<span className="text-gray-800">{formatDate(r.newEndTime)}</span></div>
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="py-12 text-center text-gray-400">
+            <FileText size={48} className="mx-auto mb-3 opacity-50" />
+            <div>暂无续费记录</div>
+          </div>
+        )}
       </BaseModal>
     </div>
   );

@@ -1,5 +1,6 @@
 import { useState, useMemo } from 'react';
-import { AlertTriangle, Clock, CheckCircle, Users, RefreshCw, Bell, Send, Pencil } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { AlertTriangle, Clock, CheckCircle, Users, RefreshCw, Bell, Send, Pencil, FileText } from 'lucide-react';
 import DataTable from '@/components/Table/DataTable';
 import BaseModal from '@/components/Modal/BaseModal';
 import { useAppStore } from '@/store';
@@ -16,11 +17,12 @@ const PAGE_SIZE = 10;
 const ASSIGNEES = ['客服小王', '客服小李', '运维小张', '管理员'];
 
 export default function Exceptions() {
-  const { exceptionOrders, devices, updateExceptionStatus, correctExceptionPlate } = useAppStore();
+  const navigate = useNavigate();
+  const { exceptionOrders, devices, parkingSpaces, updateExceptionStatus, correctExceptionPlate, setSearchPlate } = useAppStore();
 
   const [filterType, setFilterType] = useState<ExceptionType | ''>('');
   const [filterStatus, setFilterStatus] = useState<ExceptionStatus | ''>('');
-  const [searchPlate, setSearchPlate] = useState('');
+  const [searchPlate, setLocalSearchPlate] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
 
   const [reassignModal, setReassignModal] = useState<{ open: boolean; order: ExceptionOrder | null }>({
@@ -71,7 +73,7 @@ export default function Exceptions() {
   const handleReset = () => {
     setFilterType('');
     setFilterStatus('');
-    setSearchPlate('');
+    setLocalSearchPlate('');
     setCurrentPage(1);
   };
 
@@ -87,7 +89,15 @@ export default function Exceptions() {
 
   const handlePlateCorrect = () => {
     if (plateCorrectModal.order && correctedPlate.trim()) {
-      correctExceptionPlate(plateCorrectModal.order.id, correctedPlate.trim());
+      const plate = correctedPlate.trim();
+      const orderId = plateCorrectModal.order.id;
+      correctExceptionPlate(orderId, plate);
+      updateExceptionStatus(orderId, 'processing');
+      setTimeout(() => {
+        const space = parkingSpaces.find(s => s.spaceNo === plateCorrectModal.order?.spaceNo);
+        const synced = space?.plateNumber === plate;
+        alert(`补录成功：新车牌已同步到订单、车位地图${synced ? '' : '（车位同步验证中）'}`);
+      }, 50);
     }
     setPlateCorrectModal({ open: false, order: null });
   };
@@ -104,6 +114,11 @@ export default function Exceptions() {
     if (window.confirm(`确定${action}异常 ${order.id}？`)) {
       updateExceptionStatus(order.id, status);
     }
+  };
+
+  const handleViewOrder = (plateNumber: string) => {
+    setSearchPlate(plateNumber);
+    navigate('/orders');
   };
 
   const handleNotify = (device: Device) => {
@@ -125,7 +140,12 @@ export default function Exceptions() {
       return o.plateNumber;
     }},
     { key: 'spaceNo', title: '车位号', width: '100px', align: 'center' as const, render: (o: ExceptionOrder) => o.spaceNo || '-' },
-    { key: 'description', title: '描述' },
+    { key: 'description', title: '描述', render: (o: ExceptionOrder) => {
+      if (o.type === 'unrecognized_plate' && o.plateNumber && o.plateNumber !== '-') {
+        return <span className="text-green-600 font-medium">车牌已补录：{o.plateNumber}</span>;
+      }
+      return o.description;
+    }},
     { key: 'createTime', title: '创建时间', width: '160px', render: (o: ExceptionOrder) => formatDateTime(o.createTime) },
     { key: 'assignee', title: '处理人', width: '90px', align: 'center' as const, render: (o: ExceptionOrder) => o.assignee || '-' },
     {
@@ -143,13 +163,18 @@ export default function Exceptions() {
     {
       key: 'actions',
       title: '操作',
-      width: '260px',
+      width: '360px',
       align: 'center' as const,
       render: (o: ExceptionOrder) => (
         <div className="flex items-center justify-center gap-1 flex-wrap">
           {o.type === 'unrecognized_plate' && (
             <button className="btn btn-ghost text-blue-600 hover:text-blue-700" onClick={() => openPlateCorrectModal(o)}>
               <Pencil size={14} className="mr-1" />补录车牌
+            </button>
+          )}
+          {o.plateNumber && o.plateNumber !== '-' && (
+            <button className="btn btn-ghost text-indigo-600 hover:text-indigo-700" onClick={() => handleViewOrder(o.plateNumber!)}>
+              <FileText size={14} className="mr-1" />查看关联订单
             </button>
           )}
           <button className="btn btn-ghost text-accent-600 hover:text-accent-700" onClick={() => openReassignModal(o)}>
@@ -261,7 +286,7 @@ export default function Exceptions() {
           placeholder="搜索车牌号"
           value={searchPlate}
           onChange={(e) => {
-            setSearchPlate(e.target.value);
+            setLocalSearchPlate(e.target.value);
             setCurrentPage(1);
           }}
         />

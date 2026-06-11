@@ -15,6 +15,8 @@ export interface ParkingSpace {
   floor: number;
   buildingId: string;
   buildingName: string;
+  lotId?: string;
+  lotName?: string;
   status: ParkingSpaceStatus;
   plateNumber?: string;
   enterTime?: string;
@@ -26,11 +28,40 @@ export interface CouponRecord {
   issuedAt: string;
 }
 
+export interface OperationLog {
+  id: string;
+  orderId: string;
+  action: 'refund' | 'pay' | 'remark' | 'coupon' | 'plate_correct';
+  operator: string;
+  time: string;
+  detail: string;
+}
+
+export interface RenewalRecord {
+  id: string;
+  cardId: string;
+  previousEndTime: string;
+  newEndTime: string;
+  days: number;
+  amount: number;
+  operator: string;
+  time: string;
+}
+
+export interface ParkingLot {
+  id: string;
+  name: string;
+  address: string;
+  buildingIds: string[];
+}
+
 export interface ParkingOrder {
   id: string;
   plateNumber: string;
   spaceNo: string;
   buildingName: string;
+  lotId?: string;
+  lotName?: string;
   enterTime: string;
   exitTime?: string;
   duration: number;
@@ -40,6 +71,7 @@ export interface ParkingOrder {
   paymentMethod?: PaymentMethod;
   couponId?: string;
   couponRecords?: CouponRecord[];
+  operationLogs?: OperationLog[];
   remark?: string;
 }
 
@@ -54,6 +86,9 @@ export interface MonthlyCard {
   status: CardStatus;
   listType: ListType;
   buildingName: string;
+  lotId?: string;
+  lotName?: string;
+  renewalRecords?: RenewalRecord[];
 }
 
 export interface ExceptionOrder {
@@ -94,6 +129,8 @@ export interface Building {
   name: string;
   floors: number;
   spaceCount: number;
+  lotId: string;
+  lotName: string;
 }
 
 export interface Coupon {

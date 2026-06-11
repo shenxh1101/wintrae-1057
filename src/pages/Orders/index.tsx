@@ -1,5 +1,5 @@
 import { useState, useMemo } from 'react';
-import { RefreshCw, Filter, DollarSign, FileText, Ticket, Download } from 'lucide-react';
+import { RefreshCw, Filter, DollarSign, FileText, Ticket, Download, History } from 'lucide-react';
 import DataTable from '@/components/Table/DataTable';
 import BaseModal from '@/components/Modal/BaseModal';
 import { useAppStore } from '@/store';
@@ -8,6 +8,14 @@ import { couponPlans } from '@/mock/data';
 import type { ParkingOrder, OrderStatus, PaymentMethod } from '@/types';
 
 const PAGE_SIZE = 10;
+
+const OPERATION_ACTION_MAP: Record<string, { label: string; className: string }> = {
+  refund: { label: '退款', className: 'bg-red-100 text-red-700' },
+  pay: { label: '补缴', className: 'bg-green-100 text-green-700' },
+  remark: { label: '备注', className: 'bg-gray-100 text-gray-700' },
+  coupon: { label: '发券', className: 'bg-purple-100 text-purple-700' },
+  plate_correct: { label: '车牌修正', className: 'bg-blue-100 text-blue-700' },
+};
 
 export default function Orders() {
   const { parkingOrders, buildings, updateOrderStatus, addOrderRemark, issueCoupon } = useAppStore();
@@ -24,6 +32,7 @@ export default function Orders() {
   const [remarkText, setRemarkText] = useState<string>('');
   const [couponModal, setCouponModal] = useState<{ open: boolean; order: ParkingOrder | null }>({ open: false, order: null });
   const [selectedCouponId, setSelectedCouponId] = useState<string>('');
+  const [detailModal, setDetailModal] = useState<{ open: boolean; order: ParkingOrder | null }>({ open: false, order: null });
 
   const filteredOrders = useMemo(() => {
     return parkingOrders.filter((o) => {
@@ -56,7 +65,7 @@ export default function Orders() {
   };
 
   const handleExport = () => {
-    const headers = ['订单号','车牌号','车位','楼栋','入场时间','出场时间','费用','已付','状态','优惠券','备注'];
+    const headers = ['订单号','车牌号','车位','楼栋','入场时间','出场时间','费用','已付','状态','优惠券','备注','操作流水'];
     const rows = filteredOrders.map((o) => [
       o.id,
       o.plateNumber,
@@ -69,6 +78,7 @@ export default function Orders() {
       orderStatusMap[o.status].label,
       o.couponRecords?.map((r) => r.couponName).join(';') || '',
       o.remark || '',
+      o.operationLogs?.map((log) => log.detail).join(';') || '',
     ]);
     const csv = [headers, ...rows].map((r) => r.join(',')).join('\n');
     const BOM = '\uFEFF';
@@ -108,6 +118,10 @@ export default function Orders() {
   const openCouponModal = (order: ParkingOrder) => {
     setCouponModal({ open: true, order });
     setSelectedCouponId('');
+  };
+
+  const openDetailModal = (order: ParkingOrder) => {
+    setDetailModal({ open: true, order });
   };
 
   const handleSendCoupon = () => {
@@ -170,7 +184,7 @@ export default function Orders() {
     {
       key: 'actions',
       title: '操作',
-      width: '260px',
+      width: '330px',
       align: 'center' as const,
       render: (o: ParkingOrder) => (
         <div className="flex items-center justify-center gap-1 flex-wrap">
@@ -189,6 +203,9 @@ export default function Orders() {
           </button>
           <button className="btn btn-ghost text-warning hover:text-warning" onClick={() => openCouponModal(o)}>
             <Ticket size={14} className="mr-1" />发券
+          </button>
+          <button className="btn btn-ghost" onClick={() => openDetailModal(o)}>
+            <History size={14} className="mr-1" />详情
           </button>
         </div>
       ),
@@ -292,6 +309,105 @@ export default function Orders() {
             </label>
           ))}
         </div>
+      </BaseModal>
+
+      <BaseModal
+        open={detailModal.open}
+        title={`订单详情 - ${detailModal.order?.id || ''}`}
+        size="lg"
+        onClose={() => setDetailModal({ open: false, order: null })}
+        footer={
+          <>
+            <button className="btn btn-accent" onClick={() => setDetailModal({ open: false, order: null })}>关闭</button>
+          </>
+        }
+      >
+        {detailModal.order && (
+          <div className="space-y-6">
+            <div className="bg-gray-50 rounded-lg p-5 border border-gray-200">
+              <h3 className="font-semibold text-gray-800 mb-4">基本信息</h3>
+              <div className="grid grid-cols-2 gap-x-8 gap-y-3">
+                <div className="flex">
+                  <span className="text-gray-500 w-20 flex-shrink-0">订单号：</span>
+                  <span className="text-gray-800 font-medium">{detailModal.order.id}</span>
+                </div>
+                <div className="flex">
+                  <span className="text-gray-500 w-20 flex-shrink-0">车牌号：</span>
+                  <span className="text-gray-800 font-medium">{detailModal.order.plateNumber}</span>
+                </div>
+                <div className="flex">
+                  <span className="text-gray-500 w-20 flex-shrink-0">车位：</span>
+                  <span className="text-gray-800">{detailModal.order.spaceNo}</span>
+                </div>
+                <div className="flex">
+                  <span className="text-gray-500 w-20 flex-shrink-0">楼栋：</span>
+                  <span className="text-gray-800">{detailModal.order.buildingName}</span>
+                </div>
+                <div className="flex">
+                  <span className="text-gray-500 w-20 flex-shrink-0">车场：</span>
+                  <span className="text-gray-800">{detailModal.order.lotName || '-'}</span>
+                </div>
+                <div className="flex">
+                  <span className="text-gray-500 w-20 flex-shrink-0">入场时间：</span>
+                  <span className="text-gray-800">{formatDateTime(detailModal.order.enterTime)}</span>
+                </div>
+                <div className="flex">
+                  <span className="text-gray-500 w-20 flex-shrink-0">出场时间：</span>
+                  <span className="text-gray-800">{detailModal.order.exitTime ? formatDateTime(detailModal.order.exitTime) : '-'}</span>
+                </div>
+                <div className="flex">
+                  <span className="text-gray-500 w-20 flex-shrink-0">停车时长：</span>
+                  <span className="text-gray-800">{formatDuration(detailModal.order.duration)}</span>
+                </div>
+                <div className="flex">
+                  <span className="text-gray-500 w-20 flex-shrink-0">费用：</span>
+                  <span className="text-gray-800 font-medium">{formatCurrency(detailModal.order.totalFee)}</span>
+                </div>
+                <div className="flex">
+                  <span className="text-gray-500 w-20 flex-shrink-0">已付：</span>
+                  <span className="text-gray-800 font-medium">{formatCurrency(detailModal.order.paidFee)}</span>
+                </div>
+                <div className="flex">
+                  <span className="text-gray-500 w-20 flex-shrink-0">状态：</span>
+                  <span className={`tag ${orderStatusMap[detailModal.order.status].bg} ${orderStatusMap[detailModal.order.status].color}`}>
+                    {orderStatusMap[detailModal.order.status].label}
+                  </span>
+                </div>
+                <div className="flex">
+                  <span className="text-gray-500 w-20 flex-shrink-0">支付方式：</span>
+                  <span className="text-gray-800">{detailModal.order.paymentMethod ? paymentMethodMap[detailModal.order.paymentMethod] : '-'}</span>
+                </div>
+                <div className="flex col-span-2">
+                  <span className="text-gray-500 w-20 flex-shrink-0">备注：</span>
+                  <span className="text-gray-800">{detailModal.order.remark || '-'}</span>
+                </div>
+              </div>
+            </div>
+
+            <div>
+              <h3 className="font-semibold text-gray-800 mb-4">操作流水</h3>
+              {detailModal.order.operationLogs && detailModal.order.operationLogs.length > 0 ? (
+                <div className="space-y-2">
+                  {[...detailModal.order.operationLogs]
+                    .sort((a, b) => new Date(b.time).getTime() - new Date(a.time).getTime())
+                    .map((log) => {
+                      const actionInfo = OPERATION_ACTION_MAP[log.action] || { label: log.action, className: 'bg-gray-100 text-gray-700' };
+                      return (
+                        <div key={log.id} className="flex items-start gap-3 p-3 border border-gray-200 rounded-md hover:bg-gray-50 transition-colors">
+                          <div className="w-40 flex-shrink-0 text-sm text-gray-500">{formatDateTime(log.time)}</div>
+                          <div className="w-20 flex-shrink-0 text-sm text-gray-600">{log.operator}</div>
+                          <span className={`tag ${actionInfo.className} flex-shrink-0`}>{actionInfo.label}</span>
+                          <div className="flex-1 text-sm text-gray-800">{log.detail}</div>
+                        </div>
+                      );
+                    })}
+                </div>
+              ) : (
+                <div className="text-center py-8 text-gray-400">暂无操作记录</div>
+              )}
+            </div>
+          </div>
+        )}
       </BaseModal>
     </div>
   );

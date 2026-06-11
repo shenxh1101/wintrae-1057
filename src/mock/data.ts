@@ -8,12 +8,22 @@ import type {
   RevenueSummary,
   Building,
   DashboardStats,
+  ParkingLot,
 } from '@/types';
 
+export const parkingLots: ParkingLot[] = [
+  {
+    id: 'lot1',
+    name: '科技园北区车场',
+    address: '北京市海淀区中关村科技园区北区',
+    buildingIds: ['b1', 'b2', 'b3'],
+  },
+];
+
 export const buildings: Building[] = [
-  { id: 'b1', name: 'A栋', floors: 3, spaceCount: 200 },
-  { id: 'b2', name: 'B栋', floors: 2, spaceCount: 150 },
-  { id: 'b3', name: 'C栋', floors: 3, spaceCount: 180 },
+  { id: 'b1', name: 'A栋', floors: 3, spaceCount: 200, lotId: 'lot1', lotName: '科技园北区车场' },
+  { id: 'b2', name: 'B栋', floors: 2, spaceCount: 150, lotId: 'lot1', lotName: '科技园北区车场' },
+  { id: 'b3', name: 'C栋', floors: 3, spaceCount: 180, lotId: 'lot1', lotName: '科技园北区车场' },
 ];
 
 const plates = [
@@ -44,6 +54,8 @@ export const generateParkingSpaces = (): ParkingSpace[] => {
           floor,
           buildingId: building.id,
           buildingName: building.name,
+          lotId: building.lotId,
+          lotName: building.lotName,
           status,
           plateNumber: status === 'occupied' || status === 'reserved' ? plates[Math.floor(Math.random() * plates.length)] : undefined,
           enterTime: status === 'occupied' ? dayjs().subtract(Math.random() * 300, 'minute').format('YYYY-MM-DD HH:mm:ss') : undefined,
@@ -71,6 +83,8 @@ export const parkingOrders: ParkingOrder[] = Array.from({ length: 80 }, (_, i) =
     plateNumber: plates[Math.floor(Math.random() * plates.length)],
     spaceNo: parkingSpaces[i % parkingSpaces.length].spaceNo,
     buildingName: buildings[i % buildings.length].name,
+    lotId: buildings[i % buildings.length].lotId,
+    lotName: buildings[i % buildings.length].lotName,
     enterTime: enterTime.format('YYYY-MM-DD HH:mm:ss'),
     exitTime: exitTime?.format('YYYY-MM-DD HH:mm:ss'),
     duration,
@@ -103,6 +117,8 @@ export const monthlyCards: MonthlyCard[] = Array.from({ length: 35 }, (_, i) => 
     status: cardStatuses[i % cardStatuses.length],
     listType: listTypes[i % listTypes.length],
     buildingName: buildings[i % buildings.length].name,
+    lotId: buildings[i % buildings.length].lotId,
+    lotName: buildings[i % buildings.length].lotName,
   };
 });
 

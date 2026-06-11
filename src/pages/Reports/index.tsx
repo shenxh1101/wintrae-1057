@@ -30,11 +30,27 @@ const TIME_PRESETS: { key: TimeRange; label: string }[] = [
 ];
 
 export default function Reports() {
-  const { revenueSummary, buildings, dashboardStats, parkingOrders, parkingSpaces } = useAppStore();
+  const { revenueSummary, buildings, dashboardStats, parkingOrders, parkingSpaces, parkingLots } = useAppStore();
   const [timeRange, setTimeRange] = useState<TimeRange>('7days');
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
+  const [lotId, setLotId] = useState('');
   const [buildingId, setBuildingId] = useState('');
+
+  const lotName = useMemo(() => {
+    if (!lotId) return '';
+    return parkingLots.find(l => l.id === lotId)?.name ?? '';
+  }, [lotId, parkingLots]);
+
+  const filteredBuildings = useMemo(() => {
+    if (!lotId) return buildings;
+    return buildings.filter(b => b.lotId === lotId);
+  }, [lotId, buildings]);
+
+  const handleLotChange = (newLotId: string) => {
+    setLotId(newLotId);
+    setBuildingId('');
+  };
 
   const buildingName = useMemo(() => {
     if (!buildingId) return '';
@@ -50,7 +66,7 @@ export default function Reports() {
       case 'custom': start = startDate ? dayjs(startDate).startOf('day') : dayjs(0); end = endDate ? dayjs(endDate).endOf('day') : dayjs(); break;
     }
 
-    if (!buildingId) {
+    if (!buildingId && !lotId) {
       return revenueSummary.filter(d => {
         const date = dayjs(d.date);
         return !date.isBefore(start) && !date.isAfter(end);
@@ -60,7 +76,8 @@ export default function Reports() {
     const filtered = parkingOrders.filter(o => {
       const enterDate = dayjs(o.enterTime);
       if (enterDate.isBefore(start) || enterDate.isAfter(end)) return false;
-      if (o.buildingName !== buildingName) return false;
+      if (lotId && o.lotId !== lotId) return false;
+      if (buildingId && o.buildingName !== buildingName) return false;
       return true;
     });
 
@@ -84,7 +101,7 @@ export default function Reports() {
     });
 
     return result;
-  }, [revenueSummary, parkingOrders, timeRange, startDate, endDate, buildingId, buildingName]);
+  }, [revenueSummary, parkingOrders, timeRange, startDate, endDate, lotId, buildingId, buildingName]);
 
   const totals = useMemo(() => {
     const totalRevenue = filteredData.reduce((s, d) => s + d.totalRevenue, 0);
@@ -97,11 +114,16 @@ export default function Reports() {
       const bSpaces = parkingSpaces.filter(s => s.buildingId === buildingId);
       const bOccupied = bSpaces.filter(s => s.status === 'occupied').length;
       utilization = bSpaces.length > 0 ? Math.round((bOccupied / bSpaces.length) * 100) : 0;
+    } else if (lotId) {
+      const lotBuildingIds = buildings.filter(b => b.lotId === lotId).map(b => b.id);
+      const lSpaces = parkingSpaces.filter(s => lotBuildingIds.includes(s.buildingId));
+      const lOccupied = lSpaces.filter(s => s.status === 'occupied').length;
+      utilization = lSpaces.length > 0 ? Math.round((lOccupied / lSpaces.length) * 100) : 0;
     } else {
       utilization = dashboardStats.totalSpaces ? Math.round((dashboardStats.occupiedSpaces / dashboardStats.totalSpaces) * 100) : 0;
     }
     return { totalRevenue, tempRevenue, monthlyRevenue, orderCount, avgDuration, utilization };
-  }, [filteredData, dashboardStats, buildingId, parkingSpaces]);
+  }, [filteredData, dashboardStats, lotId, buildingId, parkingSpaces, buildings]);
 
   const statCards = [
     { title: '总收入', value: formatCurrency(totals.totalRevenue), icon: <Wallet size={24} />, iconBg: 'bg-accent-50', iconColor: 'text-accent-600' },
@@ -140,7 +162,11 @@ export default function Reports() {
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = `revenue_report_${dayjs().format('YYYYMMDD')}.csv`;
+    let fileName = 'revenue_report';
+    if (lotId) fileName += `_${lotId}`;
+    if (buildingId) fileName += `_${buildingId}`;
+    fileName += `_${dayjs().format('YYYYMMDD')}.csv`;
+    link.download = fileName;
     link.click();
     URL.revokeObjectURL(url);
   };
@@ -177,9 +203,16 @@ export default function Reports() {
               <input type="date" className="input w-auto" value={endDate} onChange={e => setEndDate(e.target.value)} />
             </div>
           )}
+          <select className="input w-auto" value={lotId} onChange={e => handleLotChange(e.target.value)}>
+            <option value="">全部车场</option>
+            {parkingLots.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}
+          </select>
+          {lotId && lotName && (
+            <span className="inline-flex items-center rounded-md bg-gray-100 px-2 py-1 text-xs font-medium text-gray-700">当前车场: {lotName}</span>
+          )}
           <select className="input w-auto" value={buildingId} onChange={e => setBuildingId(e.target.value)}>
             <option value="">全部楼栋</option>
-            {buildings.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
+            {filteredBuildings.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
           </select>
           {buildingId && buildingName && (
             <span className="inline-flex items-center rounded-md bg-accent-50 px-2 py-1 text-xs font-medium text-accent-600">当前: {buildingName}</span>

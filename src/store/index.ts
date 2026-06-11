@@ -7,7 +7,8 @@ import {
   exceptionOrders as mockExceptionOrders,
   devices as mockDevices,
   revenueSummary as mockRevenueSummary,
-  buildings,
+  buildings as mockBuildings,
+  parkingLots,
 } from '@/mock/data';
 import type {
   ParkingSpace,
@@ -19,6 +20,9 @@ import type {
   Building,
   DashboardStats,
   CouponRecord,
+  OperationLog,
+  RenewalRecord,
+  ParkingLot,
 } from '@/types';
 
 const STORAGE_KEY = 'smart-parking-state';
@@ -27,6 +31,7 @@ interface PersistedState {
   parkingOrders: ParkingOrder[];
   monthlyCards: MonthlyCard[];
   exceptionOrders: ExceptionOrder[];
+  parkingSpaces: ParkingSpace[];
 }
 
 function loadPersisted(): Partial<PersistedState> {
@@ -45,11 +50,24 @@ function savePersisted(state: PersistedState) {
 
 const persisted = loadPersisted();
 
+const CURRENT_OPERATOR = '管理员';
+
+const addLog = (order: ParkingOrder, log: Omit<OperationLog, 'id' | 'orderId' | 'time'>): ParkingOrder => {
+  const operationLogs = [...(order.operationLogs || []), {
+    ...log,
+    id: `LOG${Date.now()}${Math.random().toString(36).slice(2, 6)}`,
+    orderId: order.id,
+    time: new Date().toISOString(),
+  }];
+  return { ...order, operationLogs };
+};
+
 interface AppState {
   sidebarCollapsed: boolean;
   toggleSidebar: () => void;
 
   dashboardStats: DashboardStats;
+  parkingLots: ParkingLot[];
   buildings: Building[];
   parkingSpaces: ParkingSpace[];
   parkingOrders: ParkingOrder[];
@@ -84,14 +102,17 @@ const getInitialCards = (): MonthlyCard[] =>
   persisted.monthlyCards ?? mockMonthlyCards;
 const getInitialExceptions = (): ExceptionOrder[] =>
   persisted.exceptionOrders ?? mockExceptionOrders;
+const getInitialSpaces = (): ParkingSpace[] =>
+  persisted.parkingSpaces ?? mockParkingSpaces;
 
 export const useAppStore = create<AppState>((set, get) => ({
   sidebarCollapsed: false,
   toggleSidebar: () => set({ sidebarCollapsed: !get().sidebarCollapsed }),
 
   dashboardStats: mockDashboardStats,
-  buildings,
-  parkingSpaces: mockParkingSpaces,
+  parkingLots,
+  buildings: mockBuildings,
+  parkingSpaces: getInitialSpaces(),
   parkingOrders: getInitialOrders(),
   monthlyCards: getInitialCards(),
   exceptionOrders: getInitialExceptions(),
@@ -107,16 +128,38 @@ export const useAppStore = create<AppState>((set, get) => ({
   setSearchPlate: (p) => set({ searchPlate: p }),
 
   updateOrderStatus: (id, status, paidFee, remark) => {
-    const parkingOrders = get().parkingOrders.map((o) =>
-      o.id === id ? { ...o, status, paidFee: paidFee ?? o.paidFee, remark: remark ?? o.remark } : o
-    );
-    savePersisted({ parkingOrders, monthlyCards: get().monthlyCards, exceptionOrders: get().exceptionOrders });
+    const action = status === 'refunded' ? 'refund' : status === 'paid' ? 'pay' : 'remark';
+    const detail = status === 'refunded' ? '订单退款' : status === 'paid' ? '订单补缴' : remark || '状态更新';
+
+    const parkingOrders = get().parkingOrders.map((o) => {
+      if (o.id !== id) return o;
+      let updated: ParkingOrder = { ...o, status, paidFee: paidFee ?? o.paidFee, remark: remark ?? o.remark };
+      updated = addLog(updated, { action, operator: CURRENT_OPERATOR, detail });
+      return updated;
+    });
+
+    savePersisted({
+      parkingOrders,
+      monthlyCards: get().monthlyCards,
+      exceptionOrders: get().exceptionOrders,
+      parkingSpaces: get().parkingSpaces,
+    });
     set({ parkingOrders });
   },
 
   addOrderRemark: (id, remark) => {
-    const parkingOrders = get().parkingOrders.map((o) => (o.id === id ? { ...o, remark } : o));
-    savePersisted({ parkingOrders, monthlyCards: get().monthlyCards, exceptionOrders: get().exceptionOrders });
+    const parkingOrders = get().parkingOrders.map((o) => {
+      if (o.id !== id) return o;
+      let updated: ParkingOrder = { ...o, remark };
+      updated = addLog(updated, { action: 'remark', operator: CURRENT_OPERATOR, detail: `备注: ${remark}` });
+      return updated;
+    });
+    savePersisted({
+      parkingOrders,
+      monthlyCards: get().monthlyCards,
+      exceptionOrders: get().exceptionOrders,
+      parkingSpaces: get().parkingSpaces,
+    });
     set({ parkingOrders });
   },
 
@@ -124,9 +167,16 @@ export const useAppStore = create<AppState>((set, get) => ({
     const parkingOrders = get().parkingOrders.map((o) => {
       if (o.id !== id) return o;
       const couponRecords = [...(o.couponRecords || []), record];
-      return { ...o, couponRecords, couponId: record.couponId };
+      let updated: ParkingOrder = { ...o, couponRecords, couponId: record.couponId };
+      updated = addLog(updated, { action: 'coupon', operator: CURRENT_OPERATOR, detail: `发放优惠券: ${record.couponName}` });
+      return updated;
     });
-    savePersisted({ parkingOrders, monthlyCards: get().monthlyCards, exceptionOrders: get().exceptionOrders });
+    savePersisted({
+      parkingOrders,
+      monthlyCards: get().monthlyCards,
+      exceptionOrders: get().exceptionOrders,
+      parkingSpaces: get().parkingSpaces,
+    });
     set({ parkingOrders });
   },
 
@@ -134,59 +184,124 @@ export const useAppStore = create<AppState>((set, get) => ({
     const exceptionOrders = get().exceptionOrders.map((e) =>
       e.id === id ? { ...e, status, assignee: assignee ?? e.assignee } : e
     );
-    savePersisted({ parkingOrders: get().parkingOrders, monthlyCards: get().monthlyCards, exceptionOrders });
+    savePersisted({
+      parkingOrders: get().parkingOrders,
+      monthlyCards: get().monthlyCards,
+      exceptionOrders,
+      parkingSpaces: get().parkingSpaces,
+    });
     set({ exceptionOrders });
   },
 
   correctExceptionPlate: (id, plateNumber) => {
-    const exceptionOrders = get().exceptionOrders.map((e) =>
+    let exceptionOrders = get().exceptionOrders.map((e) =>
       e.id === id ? { ...e, plateNumber } : e
     );
     let parkingOrders = get().parkingOrders;
+    let parkingSpaces = get().parkingSpaces;
+
     const exc = exceptionOrders.find((e) => e.id === id);
-    if (exc?.orderId) {
-      parkingOrders = parkingOrders.map((o) =>
-        o.id === exc.orderId ? { ...o, plateNumber } : o
-      );
-    }
-    parkingOrders = parkingOrders.map((o) => {
-      if (o.plateNumber || !exc) return o;
-      if (exc.spaceNo && o.spaceNo === exc.spaceNo && o.status === 'exception') {
-        return { ...o, plateNumber };
+    if (exc) {
+      if (exc.orderId) {
+        parkingOrders = parkingOrders.map((o) => {
+          if (o.id !== exc.orderId) return o;
+          let updated: ParkingOrder = { ...o, plateNumber };
+          updated = addLog(updated, {
+            action: 'plate_correct',
+            operator: CURRENT_OPERATOR,
+            detail: `修正车牌: ${plateNumber}`,
+          });
+          return updated;
+        });
+      } else {
+        parkingOrders = parkingOrders.map((o) => {
+          if (o.plateNumber || !exc) return o;
+          if (exc.spaceNo && o.spaceNo === exc.spaceNo && o.status === 'exception') {
+            let updated: ParkingOrder = { ...o, plateNumber };
+            updated = addLog(updated, {
+              action: 'plate_correct',
+              operator: CURRENT_OPERATOR,
+              detail: `补录车牌: ${plateNumber}`,
+            });
+            return updated;
+          }
+          return o;
+        });
       }
-      return o;
-    });
-    savePersisted({ parkingOrders, monthlyCards: get().monthlyCards, exceptionOrders });
-    set({ exceptionOrders, parkingOrders });
+
+      if (exc.spaceNo) {
+        parkingSpaces = parkingSpaces.map((s) => {
+          if (s.spaceNo === exc.spaceNo && s.status === 'occupied') {
+            return { ...s, plateNumber };
+          }
+          return s;
+        });
+      }
+    }
+
+    savePersisted({ parkingOrders, monthlyCards: get().monthlyCards, exceptionOrders, parkingSpaces });
+    set({ exceptionOrders, parkingOrders, parkingSpaces });
   },
 
   addMonthlyCard: (card) => {
     const monthlyCards = [{ ...card, id: `MC${Date.now()}` }, ...get().monthlyCards];
-    savePersisted({ parkingOrders: get().parkingOrders, monthlyCards, exceptionOrders: get().exceptionOrders });
+    savePersisted({
+      parkingOrders: get().parkingOrders,
+      monthlyCards,
+      exceptionOrders: get().exceptionOrders,
+      parkingSpaces: get().parkingSpaces,
+    });
     set({ monthlyCards });
   },
 
   renewMonthlyCard: (id, days) => {
+    const renewalPrices: Record<number, number> = { 30: 300, 90: 800, 365: 3000 };
+    const amount = renewalPrices[days] || Math.ceil(days / 30) * 100;
+
     const monthlyCards = get().monthlyCards.map((c) => {
       if (c.id !== id) return c;
       const start = new Date(c.endTime);
       start.setDate(start.getDate() + 1);
       const end = new Date(start);
       end.setDate(end.getDate() + days);
+      const previousEndTime = c.endTime;
+      const newEndTime = end.toISOString().slice(0, 10);
+      const renewalRecord: RenewalRecord = {
+        id: `RR${Date.now()}`,
+        cardId: c.id,
+        previousEndTime,
+        newEndTime,
+        days,
+        amount,
+        operator: CURRENT_OPERATOR,
+        time: new Date().toISOString(),
+      };
+      const renewalRecords = [...(c.renewalRecords || []), renewalRecord];
       return {
         ...c,
         status: 'active' as const,
         startTime: start.toISOString().slice(0, 10),
-        endTime: end.toISOString().slice(0, 10),
+        endTime: newEndTime,
+        renewalRecords,
       };
     });
-    savePersisted({ parkingOrders: get().parkingOrders, monthlyCards, exceptionOrders: get().exceptionOrders });
+    savePersisted({
+      parkingOrders: get().parkingOrders,
+      monthlyCards,
+      exceptionOrders: get().exceptionOrders,
+      parkingSpaces: get().parkingSpaces,
+    });
     set({ monthlyCards });
   },
 
   updateCardListType: (id, listType) => {
     const monthlyCards = get().monthlyCards.map((c) => (c.id === id ? { ...c, listType } : c));
-    savePersisted({ parkingOrders: get().parkingOrders, monthlyCards, exceptionOrders: get().exceptionOrders });
+    savePersisted({
+      parkingOrders: get().parkingOrders,
+      monthlyCards,
+      exceptionOrders: get().exceptionOrders,
+      parkingSpaces: get().parkingSpaces,
+    });
     set({ monthlyCards });
   },
 
@@ -195,7 +310,12 @@ export const useAppStore = create<AppState>((set, get) => ({
       if (c.id !== id) return c;
       return { ...c, status: c.status === 'suspended' ? 'active' as const : 'suspended' as const };
     });
-    savePersisted({ parkingOrders: get().parkingOrders, monthlyCards, exceptionOrders: get().exceptionOrders });
+    savePersisted({
+      parkingOrders: get().parkingOrders,
+      monthlyCards,
+      exceptionOrders: get().exceptionOrders,
+      parkingSpaces: get().parkingSpaces,
+    });
     set({ monthlyCards });
   },
 
@@ -205,6 +325,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       parkingOrders: mockParkingOrders,
       monthlyCards: mockMonthlyCards,
       exceptionOrders: mockExceptionOrders,
+      parkingSpaces: mockParkingSpaces,
     });
   },
 }));
