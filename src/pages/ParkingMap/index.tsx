@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { useAppStore } from '@/store';
 import BaseModal from '@/components/Modal/BaseModal';
 import {
@@ -8,7 +8,7 @@ import {
   formatCurrency,
   calcFee,
 } from '@/utils';
-import { Search, MapPin, Car } from 'lucide-react';
+import { Search, MapPin, Car, X } from 'lucide-react';
 import type { ParkingSpace } from '@/types';
 import dayjs from 'dayjs';
 
@@ -21,6 +21,7 @@ export default function ParkingMap() {
     setSelectedBuilding,
     setSelectedFloor,
     searchPlate,
+    setSearchPlate,
   } = useAppStore();
 
   const [selectedSpace, setSelectedSpace] = useState<ParkingSpace | null>(null);
@@ -54,6 +55,24 @@ export default function ParkingMap() {
     if (!searchPlate || !space.plateNumber) return false;
     return space.plateNumber.toLowerCase().includes(searchPlate.toLowerCase());
   };
+
+  const searchResult = useMemo(() => {
+    if (!searchPlate) return [];
+    return parkingSpaces.filter(
+      (s) => s.plateNumber && s.plateNumber.toLowerCase().includes(searchPlate.toLowerCase())
+    );
+  }, [parkingSpaces, searchPlate]);
+
+  const searchResultCount = searchResult.length;
+
+  useEffect(() => {
+    if (!searchPlate || searchResultCount === 0) return;
+    const first = searchResult[0];
+    const needsBuilding = !selectedBuildingId || first.buildingId !== selectedBuildingId;
+    const needsFloor = selectedFloor === null || first.floor !== selectedFloor;
+    if (needsBuilding) setSelectedBuilding(first.buildingId);
+    if (needsFloor) setSelectedFloor(first.floor);
+  }, [searchPlate, searchResult, searchResultCount, selectedBuildingId, selectedFloor, setSelectedBuilding, setSelectedFloor]);
 
   const getDuration = (enterTime?: string) => {
     if (!enterTime) return 0;
@@ -113,9 +132,23 @@ export default function ParkingMap() {
           {searchPlate && (
             <div className="flex items-center gap-1.5 px-3 py-1.5 bg-yellow-50 border border-yellow-200 rounded-md">
               <Search size={14} className="text-yellow-600" />
-              <span className="text-xs text-yellow-700">
-                搜索车牌: <span className="font-semibold">{searchPlate}</span>
+              <span className={`text-xs ${searchResultCount === 0 ? 'text-red-600' : 'text-yellow-700'}`}>
+                {searchResultCount > 0 ? (
+                  selectedBuildingId && selectedFloor !== null ? (
+                    <>找到 <span className="font-semibold">{searchResultCount}</span> 个匹配车位</>
+                  ) : (
+                    <>找到 <span className="font-semibold">{searchResultCount}</span> 个匹配，请选择楼栋查看</>
+                  )
+                ) : (
+                  <>未找到匹配 '<span className="font-semibold">{searchPlate}</span>' 的车牌</>
+                )}
               </span>
+              <button
+                onClick={() => setSearchPlate('')}
+                className="ml-1 p-0.5 rounded hover:bg-yellow-200 transition-colors"
+              >
+                <X size={12} className="text-yellow-600" />
+              </button>
             </div>
           )}
         </div>

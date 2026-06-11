@@ -1,5 +1,5 @@
 import { useState, useMemo } from 'react';
-import { AlertTriangle, Clock, CheckCircle, Users, RefreshCw, Bell, Send } from 'lucide-react';
+import { AlertTriangle, Clock, CheckCircle, Users, RefreshCw, Bell, Send, Pencil } from 'lucide-react';
 import DataTable from '@/components/Table/DataTable';
 import BaseModal from '@/components/Modal/BaseModal';
 import { useAppStore } from '@/store';
@@ -16,7 +16,7 @@ const PAGE_SIZE = 10;
 const ASSIGNEES = ['客服小王', '客服小李', '运维小张', '管理员'];
 
 export default function Exceptions() {
-  const { exceptionOrders, devices, updateExceptionStatus } = useAppStore();
+  const { exceptionOrders, devices, updateExceptionStatus, correctExceptionPlate } = useAppStore();
 
   const [filterType, setFilterType] = useState<ExceptionType | ''>('');
   const [filterStatus, setFilterStatus] = useState<ExceptionStatus | ''>('');
@@ -28,6 +28,12 @@ export default function Exceptions() {
     order: null,
   });
   const [selectedAssignee, setSelectedAssignee] = useState('');
+
+  const [plateCorrectModal, setPlateCorrectModal] = useState<{ open: boolean; order: ExceptionOrder | null }>({
+    open: false,
+    order: null,
+  });
+  const [correctedPlate, setCorrectedPlate] = useState('');
 
   const stats = useMemo(
     () => ({
@@ -74,6 +80,18 @@ export default function Exceptions() {
     setSelectedAssignee(order.assignee || '');
   };
 
+  const openPlateCorrectModal = (order: ExceptionOrder) => {
+    setPlateCorrectModal({ open: true, order });
+    setCorrectedPlate(order.plateNumber || '');
+  };
+
+  const handlePlateCorrect = () => {
+    if (plateCorrectModal.order && correctedPlate.trim()) {
+      correctExceptionPlate(plateCorrectModal.order.id, correctedPlate.trim());
+    }
+    setPlateCorrectModal({ open: false, order: null });
+  };
+
   const handleReassign = () => {
     if (reassignModal.order && selectedAssignee) {
       updateExceptionStatus(reassignModal.order.id, reassignModal.order.status, selectedAssignee);
@@ -100,7 +118,12 @@ export default function Exceptions() {
       width: '120px',
       render: (o: ExceptionOrder) => exceptionTypeMap[o.type],
     },
-    { key: 'plateNumber', title: '车牌号', width: '100px', align: 'center' as const, render: (o: ExceptionOrder) => o.plateNumber || '-' },
+    { key: 'plateNumber', title: '车牌号', width: '100px', align: 'center' as const, render: (o: ExceptionOrder) => {
+      if (!o.plateNumber || o.plateNumber === '-') {
+        return <span className="text-xs font-medium text-red-600 bg-red-50 px-2 py-0.5 rounded">未识别</span>;
+      }
+      return o.plateNumber;
+    }},
     { key: 'spaceNo', title: '车位号', width: '100px', align: 'center' as const, render: (o: ExceptionOrder) => o.spaceNo || '-' },
     { key: 'description', title: '描述' },
     { key: 'createTime', title: '创建时间', width: '160px', render: (o: ExceptionOrder) => formatDateTime(o.createTime) },
@@ -124,6 +147,11 @@ export default function Exceptions() {
       align: 'center' as const,
       render: (o: ExceptionOrder) => (
         <div className="flex items-center justify-center gap-1 flex-wrap">
+          {o.type === 'unrecognized_plate' && (
+            <button className="btn btn-ghost text-blue-600 hover:text-blue-700" onClick={() => openPlateCorrectModal(o)}>
+              <Pencil size={14} className="mr-1" />补录车牌
+            </button>
+          )}
           <button className="btn btn-ghost text-accent-600 hover:text-accent-700" onClick={() => openReassignModal(o)}>
             <Users size={14} className="mr-1" />改派
           </button>
@@ -339,6 +367,34 @@ export default function Exceptions() {
               </div>
             </label>
           ))}
+        </div>
+      </BaseModal>
+
+      <BaseModal
+        open={plateCorrectModal.open}
+        title={`补录车牌 - ${plateCorrectModal.order?.id || ''}`}
+        size="sm"
+        onClose={() => setPlateCorrectModal({ open: false, order: null })}
+        footer={
+          <>
+            <button className="btn btn-secondary" onClick={() => setPlateCorrectModal({ open: false, order: null })}>
+              取消
+            </button>
+            <button className="btn btn-accent" onClick={handlePlateCorrect} disabled={!correctedPlate.trim()}>
+              确认补录
+            </button>
+          </>
+        }
+      >
+        <div className="space-y-3">
+          <p className="text-sm text-gray-600">请输入正确的车牌号：</p>
+          <input
+            type="text"
+            className="input w-full"
+            placeholder="请输入车牌号，如：京A12345"
+            value={correctedPlate}
+            onChange={(e) => setCorrectedPlate(e.target.value)}
+          />
         </div>
       </BaseModal>
     </div>

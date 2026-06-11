@@ -30,11 +30,16 @@ const TIME_PRESETS: { key: TimeRange; label: string }[] = [
 ];
 
 export default function Reports() {
-  const { revenueSummary, buildings, dashboardStats } = useAppStore();
+  const { revenueSummary, buildings, dashboardStats, parkingOrders, parkingSpaces } = useAppStore();
   const [timeRange, setTimeRange] = useState<TimeRange>('7days');
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
   const [buildingId, setBuildingId] = useState('');
+
+  const buildingName = useMemo(() => {
+    if (!buildingId) return '';
+    return buildings.find(b => b.id === buildingId)?.name ?? '';
+  }, [buildingId, buildings]);
 
   const filteredData = useMemo(() => {
     let start: dayjs.Dayjs, end: dayjs.Dayjs;
@@ -44,11 +49,42 @@ export default function Reports() {
       case '30days': start = dayjs().subtract(29, 'day').startOf('day'); end = dayjs().endOf('day'); break;
       case 'custom': start = startDate ? dayjs(startDate).startOf('day') : dayjs(0); end = endDate ? dayjs(endDate).endOf('day') : dayjs(); break;
     }
-    return revenueSummary.filter(d => {
-      const date = dayjs(d.date);
-      return !date.isBefore(start) && !date.isAfter(end);
+
+    if (!buildingId) {
+      return revenueSummary.filter(d => {
+        const date = dayjs(d.date);
+        return !date.isBefore(start) && !date.isAfter(end);
+      });
+    }
+
+    const filtered = parkingOrders.filter(o => {
+      const enterDate = dayjs(o.enterTime);
+      if (enterDate.isBefore(start) || enterDate.isAfter(end)) return false;
+      if (o.buildingName !== buildingName) return false;
+      return true;
     });
-  }, [revenueSummary, timeRange, startDate, endDate]);
+
+    const grouped = new Map<string, typeof filtered>();
+    filtered.forEach(o => {
+      const dateKey = dayjs(o.enterTime).format('YYYY-MM-DD');
+      if (!grouped.has(dateKey)) grouped.set(dateKey, []);
+      grouped.get(dateKey)!.push(o);
+    });
+
+    const result: RevenueSummary[] = [];
+    const sortedKeys = [...grouped.keys()].sort();
+    sortedKeys.forEach(date => {
+      const orders = grouped.get(date)!;
+      const tempRevenue = orders.filter(o => o.paymentMethod !== 'monthly').reduce((s, o) => s + o.totalFee, 0);
+      const monthlyRevenue = orders.filter(o => o.paymentMethod === 'monthly').reduce((s, o) => s + o.totalFee, 0);
+      const totalRevenue = tempRevenue + monthlyRevenue;
+      const orderCount = orders.length;
+      const avgDuration = orderCount > 0 ? Math.round(orders.reduce((s, o) => s + o.duration, 0) / orderCount) : 0;
+      result.push({ date, totalRevenue, tempRevenue, monthlyRevenue, orderCount, avgDuration, buildingId, buildingName });
+    });
+
+    return result;
+  }, [revenueSummary, parkingOrders, timeRange, startDate, endDate, buildingId, buildingName]);
 
   const totals = useMemo(() => {
     const totalRevenue = filteredData.reduce((s, d) => s + d.totalRevenue, 0);
@@ -56,9 +92,16 @@ export default function Reports() {
     const monthlyRevenue = filteredData.reduce((s, d) => s + d.monthlyRevenue, 0);
     const orderCount = filteredData.reduce((s, d) => s + d.orderCount, 0);
     const avgDuration = filteredData.length ? Math.round(filteredData.reduce((s, d) => s + d.avgDuration, 0) / filteredData.length) : 0;
-    const utilization = dashboardStats.totalSpaces ? Math.round((dashboardStats.occupiedSpaces / dashboardStats.totalSpaces) * 100) : 0;
+    let utilization: number;
+    if (buildingId) {
+      const bSpaces = parkingSpaces.filter(s => s.buildingId === buildingId);
+      const bOccupied = bSpaces.filter(s => s.status === 'occupied').length;
+      utilization = bSpaces.length > 0 ? Math.round((bOccupied / bSpaces.length) * 100) : 0;
+    } else {
+      utilization = dashboardStats.totalSpaces ? Math.round((dashboardStats.occupiedSpaces / dashboardStats.totalSpaces) * 100) : 0;
+    }
     return { totalRevenue, tempRevenue, monthlyRevenue, orderCount, avgDuration, utilization };
-  }, [filteredData, dashboardStats]);
+  }, [filteredData, dashboardStats, buildingId, parkingSpaces]);
 
   const statCards = [
     { title: '总收入', value: formatCurrency(totals.totalRevenue), icon: <Wallet size={24} />, iconBg: 'bg-accent-50', iconColor: 'text-accent-600' },
@@ -138,6 +181,9 @@ export default function Reports() {
             <option value="">全部楼栋</option>
             {buildings.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
           </select>
+          {buildingId && buildingName && (
+            <span className="inline-flex items-center rounded-md bg-accent-50 px-2 py-1 text-xs font-medium text-accent-600">当前: {buildingName}</span>
+          )}
           <div className="flex-1" />
           <button className="btn btn-accent" onClick={handleExport}>
             <Download size={16} className="mr-1.5" />导出 Excel

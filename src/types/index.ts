@@ -20,6 +20,12 @@ export interface ParkingSpace {
   enterTime?: string;
 }
 
+export interface CouponRecord {
+  couponId: string;
+  couponName: string;
+  issuedAt: string;
+}
+
 export interface ParkingOrder {
   id: string;
   plateNumber: string;
@@ -33,6 +39,7 @@ export interface ParkingOrder {
   status: OrderStatus;
   paymentMethod?: PaymentMethod;
   couponId?: string;
+  couponRecords?: CouponRecord[];
   remark?: string;
 }
 
@@ -78,6 +85,8 @@ export interface RevenueSummary {
   monthlyRevenue: number;
   orderCount: number;
   avgDuration: number;
+  buildingId?: string;
+  buildingName?: string;
 }
 
 export interface Building {

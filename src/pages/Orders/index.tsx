@@ -1,5 +1,5 @@
 import { useState, useMemo } from 'react';
-import { RefreshCw, Filter, DollarSign, FileText, Ticket } from 'lucide-react';
+import { RefreshCw, Filter, DollarSign, FileText, Ticket, Download } from 'lucide-react';
 import DataTable from '@/components/Table/DataTable';
 import BaseModal from '@/components/Modal/BaseModal';
 import { useAppStore } from '@/store';
@@ -10,7 +10,7 @@ import type { ParkingOrder, OrderStatus, PaymentMethod } from '@/types';
 const PAGE_SIZE = 10;
 
 export default function Orders() {
-  const { parkingOrders, buildings, updateOrderStatus, addOrderRemark } = useAppStore();
+  const { parkingOrders, buildings, updateOrderStatus, addOrderRemark, issueCoupon } = useAppStore();
 
   const [buildingId, setBuildingId] = useState<string>('');
   const [status, setStatus] = useState<string>('');
@@ -55,6 +55,32 @@ export default function Orders() {
     setCurrentPage(1);
   };
 
+  const handleExport = () => {
+    const headers = ['订单号','车牌号','车位','楼栋','入场时间','出场时间','费用','已付','状态','优惠券','备注'];
+    const rows = filteredOrders.map((o) => [
+      o.id,
+      o.plateNumber,
+      o.spaceNo,
+      o.buildingName,
+      formatDateTime(o.enterTime),
+      o.exitTime ? formatDateTime(o.exitTime) : '',
+      o.totalFee,
+      o.paidFee,
+      orderStatusMap[o.status].label,
+      o.couponRecords?.map((r) => r.couponName).join(';') || '',
+      o.remark || '',
+    ]);
+    const csv = [headers, ...rows].map((r) => r.join(',')).join('\n');
+    const BOM = '\uFEFF';
+    const blob = new Blob([BOM + csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `orders_${new Date().toISOString().slice(0, 10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
   const handleRefund = (order: ParkingOrder) => {
     if (window.confirm(`确定退款订单 ${order.id}？`)) {
       updateOrderStatus(order.id, 'refunded', 0);
@@ -87,7 +113,13 @@ export default function Orders() {
   const handleSendCoupon = () => {
     if (selectedCouponId && couponModal.order) {
       const coupon = couponPlans.find((c) => c.id === selectedCouponId);
-      alert(`已向车牌 ${couponModal.order.plateNumber} 发放优惠券：${coupon?.name}`);
+      if (coupon) {
+        issueCoupon(couponModal.order.id, {
+          couponId: coupon.id,
+          couponName: coupon.name,
+          issuedAt: new Date().toISOString(),
+        });
+      }
     }
     setCouponModal({ open: false, order: null });
   };
@@ -110,6 +142,29 @@ export default function Orders() {
       render: (o: ParkingOrder) => {
         const s = orderStatusMap[o.status];
         return <span className={`tag ${s.bg} ${s.color}`}>{s.label}</span>;
+      },
+    },
+    {
+      key: 'couponRecords',
+      title: '优惠券',
+      width: '150px',
+      align: 'center' as const,
+      render: (o: ParkingOrder) => {
+        if (o.couponRecords && o.couponRecords.length > 0) {
+          const counts: Record<string, { name: string; count: number }> = {};
+          o.couponRecords.forEach((r) => {
+            if (!counts[r.couponId]) counts[r.couponId] = { name: r.couponName, count: 0 };
+            counts[r.couponId].count++;
+          });
+          return (
+            <div className="flex items-center justify-center gap-1 flex-wrap">
+              {Object.values(counts).map((c, i) => (
+                <span key={i} className="tag bg-purple-100 text-purple-700">{c.name} x{c.count}</span>
+              ))}
+            </div>
+          );
+        }
+        return '-';
       },
     },
     {
@@ -177,6 +232,9 @@ export default function Orders() {
         />
         <button className="btn btn-secondary" onClick={handleReset}>
           <RefreshCw size={14} className="mr-1" />重置
+        </button>
+        <button className="btn btn-accent" onClick={handleExport}>
+          <Download size={14} className="mr-1" />导出
         </button>
       </div>
 
