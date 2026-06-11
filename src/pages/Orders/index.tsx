@@ -1,12 +1,13 @@
-import { useState, useMemo } from 'react';
-import { RefreshCw, Filter, DollarSign, FileText, Ticket, Download, History } from 'lucide-react';
+import { useState, useMemo, useEffect } from 'react';
+import { RefreshCw, Filter, DollarSign, FileText, Ticket, Download, History, AlertTriangle, Clock, MessageSquare, Car } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 import dayjs from 'dayjs';
 import DataTable from '@/components/Table/DataTable';
 import BaseModal from '@/components/Modal/BaseModal';
 import { useAppStore } from '@/store';
 import { orderStatusMap, paymentMethodMap, formatCurrency, formatDuration, formatDateTime } from '@/utils';
 import { couponPlans } from '@/mock/data';
-import type { ParkingOrder, OrderStatus, PaymentMethod } from '@/types';
+import type { ParkingOrder, OrderStatus, PaymentMethod, ExceptionOrder } from '@/types';
 
 const PAGE_SIZE = 10;
 
@@ -19,14 +20,15 @@ const OPERATION_ACTION_MAP: Record<string, { label: string; className: string }>
 };
 
 export default function Orders() {
-  const { parkingOrders, buildings, updateOrderStatus, addOrderRemark, issueCoupon } = useAppStore();
+  const navigate = useNavigate();
+  const { parkingOrders, buildings, exceptionOrders, updateOrderStatus, addOrderRemark, issueCoupon, setSelectedBuilding, setSearchPlate: setStoreSearchPlate } = useAppStore();
 
   const [buildingId, setBuildingId] = useState<string>('');
   const [status, setStatus] = useState<string>('');
   const [paymentMethod, setPaymentMethod] = useState<string>('');
   const [startDate, setStartDate] = useState<string>('');
   const [endDate, setEndDate] = useState<string>('');
-  const [searchPlate, setSearchPlate] = useState<string>('');
+  const [searchPlate, setLocalSearchPlate] = useState<string>('');
   const [currentPage, setCurrentPage] = useState<number>(1);
 
   const [remarkModal, setRemarkModal] = useState<{ open: boolean; order: ParkingOrder | null }>({ open: false, order: null });
@@ -35,6 +37,17 @@ export default function Orders() {
   const [selectedCouponId, setSelectedCouponId] = useState<string>('');
   const [detailModal, setDetailModal] = useState<{ open: boolean; order: ParkingOrder | null }>({ open: false, order: null });
   const [logFilter, setLogFilter] = useState<string>('all');
+  const [activeCard, setActiveCard] = useState<string>('');
+
+  useEffect(() => {
+    const state = useAppStore.getState();
+    if (state.searchPlate) {
+      setLocalSearchPlate(state.searchPlate);
+    }
+    if (state.selectedBuildingId) {
+      setBuildingId(state.selectedBuildingId);
+    }
+  }, []);
 
   const filteredOrders = useMemo(() => {
     return parkingOrders.filter((o) => {
@@ -56,14 +69,104 @@ export default function Orders() {
     return filteredOrders.slice(start, start + PAGE_SIZE);
   }, [filteredOrders, currentPage]);
 
+  const getRelatedException = (order: ParkingOrder): ExceptionOrder | undefined => {
+    return exceptionOrders.find((e) =>
+      e.orderId === order.id ||
+      (e.plateNumber === order.plateNumber && e.spaceNo === order.spaceNo)
+    );
+  };
+
+  const dashboardStats = useMemo(() => {
+    const now = new Date().getTime();
+    const twentyFourHoursAgo = now - 24 * 60 * 60 * 1000;
+
+    const pendingRefund = parkingOrders.filter((o) => {
+      if (o.status !== 'paid') return false;
+      const hasRefund = o.operationLogs?.some((log) => log.action === 'refund');
+      return !hasRefund;
+    }).length;
+
+    const pendingPay = parkingOrders.filter((o) => o.status === 'pending').length;
+
+    const pendingCoupon = parkingOrders.filter((o) =>
+      o.totalFee > 200 && (!o.couponRecords || o.couponRecords.length === 0)
+    ).length;
+
+    const pendingRemark = parkingOrders.filter((o) => {
+      if (!o.remark || o.remark.trim() === '') return true;
+      const hasRecentPlateCorrect = o.operationLogs?.some((log) =>
+        log.action === 'plate_correct' && new Date(log.time).getTime() > twentyFourHoursAgo
+      );
+      return hasRecentPlateCorrect;
+    }).length;
+
+    const pendingPlateCorrect = parkingOrders.filter((o) => {
+      const hasPlateCorrect = o.operationLogs?.some((log) => log.action === 'plate_correct');
+      if (!hasPlateCorrect) return false;
+      const relatedException = getRelatedException(o);
+      return relatedException && relatedException.status !== 'resolved';
+    }).length;
+
+    return [
+      { key: 'refund', label: '待退款', count: pendingRefund, color: 'bg-red-50 border-red-200 text-red-600', activeColor: 'bg-red-100 border-red-300', icon: DollarSign },
+      { key: 'pay', label: '待补缴', count: pendingPay, color: 'bg-amber-50 border-amber-200 text-amber-600', activeColor: 'bg-amber-100 border-amber-300', icon: Clock },
+      { key: 'coupon', label: '待发券', count: pendingCoupon, color: 'bg-purple-50 border-purple-200 text-purple-600', activeColor: 'bg-purple-100 border-purple-300', icon: Ticket },
+      { key: 'remark', label: '待备注', count: pendingRemark, color: 'bg-gray-50 border-gray-200 text-gray-600', activeColor: 'bg-gray-100 border-gray-300', icon: MessageSquare },
+      { key: 'plate', label: '待车牌修正', count: pendingPlateCorrect, color: 'bg-blue-50 border-blue-200 text-blue-600', activeColor: 'bg-blue-100 border-blue-300', icon: Car },
+    ];
+  }, [parkingOrders, exceptionOrders]);
+
+  const handleCardClick = (key: string) => {
+    setCurrentPage(1);
+    setActiveCard(activeCard === key ? '' : key);
+
+    switch (key) {
+      case 'refund':
+        setStatus('paid');
+        setPaymentMethod('');
+        setLocalSearchPlate('');
+        setStoreSearchPlate('');
+        break;
+      case 'pay':
+        setStatus('pending');
+        setPaymentMethod('');
+        setLocalSearchPlate('');
+        setStoreSearchPlate('');
+        break;
+      case 'coupon':
+        setStatus('');
+        setPaymentMethod('');
+        setLocalSearchPlate('');
+        setStoreSearchPlate('');
+        break;
+      case 'remark':
+        setStatus('');
+        setPaymentMethod('');
+        setLocalSearchPlate('');
+        setStoreSearchPlate('');
+        break;
+      case 'plate':
+        setStatus('');
+        setPaymentMethod('');
+        break;
+      default:
+        setStatus('');
+        setPaymentMethod('');
+        setLocalSearchPlate('');
+        setStoreSearchPlate('');
+    }
+  };
+
   const handleReset = () => {
     setBuildingId('');
     setStatus('');
     setPaymentMethod('');
     setStartDate('');
     setEndDate('');
-    setSearchPlate('');
+    setLocalSearchPlate('');
+    setStoreSearchPlate('');
     setCurrentPage(1);
+    setActiveCard('');
   };
 
   const handleExport = () => {
@@ -72,6 +175,10 @@ export default function Orders() {
       const operators = o.operationLogs ? [...new Set(o.operationLogs.map((log) => log.operator))].join(';') : '';
       const timeSummary = o.operationLogs ? o.operationLogs.map((log) => `${log.action}:${dayjs(log.time).format('YYYY-MM-DD HH:mm:ss')}`).join(';') : '';
       const actionSummary = o.operationLogs ? o.operationLogs.map((log) => log.detail).join(';') : '';
+      const relatedException = getRelatedException(o);
+      const remarkParts: string[] = [];
+      if (o.remark) remarkParts.push(o.remark);
+      if (relatedException) remarkParts.push(`关联异常单号: ${relatedException.id}`);
       return [
         o.id,
         o.plateNumber,
@@ -85,7 +192,7 @@ export default function Orders() {
         o.paymentMethod ? paymentMethodMap[o.paymentMethod] : '',
         orderStatusMap[o.status].label,
         o.couponRecords?.map((r) => r.couponName).join(';') || '',
-        o.remark || '',
+        remarkParts.join('; '),
         operators,
         timeSummary,
         actionSummary,
@@ -165,15 +272,19 @@ export default function Orders() {
     {
       key: 'plateNumber',
       title: '车牌号',
-      width: '140px',
+      width: '160px',
       align: 'center' as const,
       render: (o: ParkingOrder) => {
         const hasPlateCorrect = o.operationLogs?.filter((log) => log.action === 'plate_correct').length ?? 0 > 0;
+        const relatedException = getRelatedException(o);
         return (
           <div className="flex items-center justify-center gap-1 flex-wrap">
             <span>{o.plateNumber}</span>
             {hasPlateCorrect && (
               <span className="tag bg-blue-100 text-blue-700 text-xs px-1.5 py-0.5">已修正</span>
+            )}
+            {relatedException && (
+              <span className="tag bg-red-100 text-red-700 text-xs px-1.5 py-0.5">关联异常</span>
             )}
           </div>
         );
@@ -283,7 +394,7 @@ export default function Orders() {
           className="input w-40"
           placeholder="搜索车牌号"
           value={searchPlate}
-          onChange={(e) => { setSearchPlate(e.target.value); setCurrentPage(1); }}
+          onChange={(e) => { setLocalSearchPlate(e.target.value); setCurrentPage(1); }}
         />
         <button className="btn btn-secondary" onClick={handleReset}>
           <RefreshCw size={14} className="mr-1" />重置
@@ -291,6 +402,34 @@ export default function Orders() {
         <button className="btn btn-accent" onClick={handleExport}>
           <Download size={14} className="mr-1" />导出
         </button>
+      </div>
+
+      <div className="mb-4">
+        <h3 className="text-sm font-medium text-gray-700 mb-2 flex items-center gap-1">
+          <AlertTriangle size={14} className="text-amber-500" />
+          客服跟进看板
+        </h3>
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+          {dashboardStats.map((card) => {
+            const Icon = card.icon;
+            const isActive = activeCard === card.key;
+            return (
+              <div
+                key={card.key}
+                className={`p-3 rounded-lg border cursor-pointer transition-all duration-200 hover:shadow-md ${
+                  isActive ? card.activeColor : card.color
+                }`}
+                onClick={() => handleCardClick(card.key)}
+              >
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-xs font-medium">{card.label}</span>
+                  <Icon size={16} className={isActive ? 'opacity-100' : 'opacity-70'} />
+                </div>
+                <div className="text-2xl font-bold">{card.count}</div>
+              </div>
+            );
+          })}
+        </div>
       </div>
 
       <DataTable<ParkingOrder>
@@ -427,6 +566,30 @@ export default function Orders() {
                   <span className="text-gray-500 w-20 flex-shrink-0">备注：</span>
                   <span className="text-gray-800">{detailModal.order.remark || '-'}</span>
                 </div>
+                {(() => {
+                  const relatedException = getRelatedException(detailModal.order);
+                  if (relatedException) {
+                    const building = buildings.find((b) => b.name === detailModal.order.buildingName);
+                    return (
+                      <div className="flex col-span-2">
+                        <span className="text-gray-500 w-20 flex-shrink-0">关联异常：</span>
+                        <span
+                          className="text-red-600 cursor-pointer hover:underline font-medium"
+                          onClick={() => {
+                            setStoreSearchPlate(detailModal.order.plateNumber);
+                            if (building) {
+                              setSelectedBuilding(building.id);
+                            }
+                            navigate('/exceptions');
+                          }}
+                        >
+                          {relatedException.id}（点击跳转）
+                        </span>
+                      </div>
+                    );
+                  }
+                  return null;
+                })()}
               </div>
             </div>
 

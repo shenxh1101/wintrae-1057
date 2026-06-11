@@ -32,6 +32,11 @@ interface PersistedState {
   monthlyCards: MonthlyCard[];
   exceptionOrders: ExceptionOrder[];
   parkingSpaces: ParkingSpace[];
+  selectedBuildingId: string | null;
+  selectedFloor: number | null;
+  searchPlate: string;
+  lastTraceExceptionId: string | null;
+  lastTraceOrderId: string | null;
 }
 
 function loadPersisted(): Partial<PersistedState> {
@@ -79,16 +84,20 @@ interface AppState {
   selectedBuildingId: string | null;
   selectedFloor: number | null;
   searchPlate: string;
+  lastTraceExceptionId: string | null;
+  lastTraceOrderId: string | null;
 
   setSelectedBuilding: (id: string | null) => void;
   setSelectedFloor: (floor: number | null) => void;
   setSearchPlate: (p: string) => void;
+  setLastTraceExceptionId: (id: string | null) => void;
+  setLastTraceOrderId: (id: string | null) => void;
 
   updateOrderStatus: (id: string, status: ParkingOrder['status'], paidFee?: number) => void;
   addOrderRemark: (id: string, remark: string) => void;
   issueCoupon: (id: string, record: CouponRecord) => void;
   updateExceptionStatus: (id: string, status: ExceptionOrder['status'], assignee?: string) => void;
-  correctExceptionPlate: (id: string, plateNumber: string) => void;
+  correctExceptionPlate: (id: string, plateNumber: string, matchedOrderId?: string) => void;
   addMonthlyCard: (card: Omit<MonthlyCard, 'id'>) => void;
   renewMonthlyCard: (id: string, days: number) => RenewalRecord | null;
   updateCardListType: (id: string, listType: MonthlyCard['listType']) => void;
@@ -119,13 +128,82 @@ export const useAppStore = create<AppState>((set, get) => ({
   devices: mockDevices,
   revenueSummary: mockRevenueSummary,
 
-  selectedBuildingId: null,
-  selectedFloor: null,
-  searchPlate: '',
+  selectedBuildingId: persisted.selectedBuildingId ?? null,
+  selectedFloor: persisted.selectedFloor ?? null,
+  searchPlate: persisted.searchPlate ?? '',
+  lastTraceExceptionId: persisted.lastTraceExceptionId ?? null,
+  lastTraceOrderId: persisted.lastTraceOrderId ?? null,
 
-  setSelectedBuilding: (id) => set({ selectedBuildingId: id, selectedFloor: null }),
-  setSelectedFloor: (floor) => set({ selectedFloor: floor }),
-  setSearchPlate: (p) => set({ searchPlate: p }),
+  setSelectedBuilding: (id) => {
+    set({ selectedBuildingId: id, selectedFloor: null });
+    savePersisted({
+      parkingOrders: get().parkingOrders,
+      monthlyCards: get().monthlyCards,
+      exceptionOrders: get().exceptionOrders,
+      parkingSpaces: get().parkingSpaces,
+      selectedBuildingId: id,
+      selectedFloor: null,
+      searchPlate: get().searchPlate,
+      lastTraceExceptionId: get().lastTraceExceptionId,
+      lastTraceOrderId: get().lastTraceOrderId,
+    });
+  },
+  setSelectedFloor: (floor) => {
+    set({ selectedFloor: floor });
+    savePersisted({
+      parkingOrders: get().parkingOrders,
+      monthlyCards: get().monthlyCards,
+      exceptionOrders: get().exceptionOrders,
+      parkingSpaces: get().parkingSpaces,
+      selectedBuildingId: get().selectedBuildingId,
+      selectedFloor: floor,
+      searchPlate: get().searchPlate,
+      lastTraceExceptionId: get().lastTraceExceptionId,
+      lastTraceOrderId: get().lastTraceOrderId,
+    });
+  },
+  setSearchPlate: (p) => {
+    set({ searchPlate: p });
+    savePersisted({
+      parkingOrders: get().parkingOrders,
+      monthlyCards: get().monthlyCards,
+      exceptionOrders: get().exceptionOrders,
+      parkingSpaces: get().parkingSpaces,
+      selectedBuildingId: get().selectedBuildingId,
+      selectedFloor: get().selectedFloor,
+      searchPlate: p,
+      lastTraceExceptionId: get().lastTraceExceptionId,
+      lastTraceOrderId: get().lastTraceOrderId,
+    });
+  },
+  setLastTraceExceptionId: (id) => {
+    set({ lastTraceExceptionId: id });
+    savePersisted({
+      parkingOrders: get().parkingOrders,
+      monthlyCards: get().monthlyCards,
+      exceptionOrders: get().exceptionOrders,
+      parkingSpaces: get().parkingSpaces,
+      selectedBuildingId: get().selectedBuildingId,
+      selectedFloor: get().selectedFloor,
+      searchPlate: get().searchPlate,
+      lastTraceExceptionId: id,
+      lastTraceOrderId: get().lastTraceOrderId,
+    });
+  },
+  setLastTraceOrderId: (id) => {
+    set({ lastTraceOrderId: id });
+    savePersisted({
+      parkingOrders: get().parkingOrders,
+      monthlyCards: get().monthlyCards,
+      exceptionOrders: get().exceptionOrders,
+      parkingSpaces: get().parkingSpaces,
+      selectedBuildingId: get().selectedBuildingId,
+      selectedFloor: get().selectedFloor,
+      searchPlate: get().searchPlate,
+      lastTraceExceptionId: get().lastTraceExceptionId,
+      lastTraceOrderId: id,
+    });
+  },
 
   updateOrderStatus: (id, status, paidFee) => {
     const action = status === 'refunded' ? 'refund' : status === 'paid' ? 'pay' : 'remark';
@@ -143,6 +221,11 @@ export const useAppStore = create<AppState>((set, get) => ({
       monthlyCards: get().monthlyCards,
       exceptionOrders: get().exceptionOrders,
       parkingSpaces: get().parkingSpaces,
+      selectedBuildingId: get().selectedBuildingId,
+      selectedFloor: get().selectedFloor,
+      searchPlate: get().searchPlate,
+      lastTraceExceptionId: get().lastTraceExceptionId,
+      lastTraceOrderId: get().lastTraceOrderId,
     });
     set({ parkingOrders });
   },
@@ -161,6 +244,11 @@ export const useAppStore = create<AppState>((set, get) => ({
       monthlyCards: get().monthlyCards,
       exceptionOrders: get().exceptionOrders,
       parkingSpaces: get().parkingSpaces,
+      selectedBuildingId: get().selectedBuildingId,
+      selectedFloor: get().selectedFloor,
+      searchPlate: get().searchPlate,
+      lastTraceExceptionId: get().lastTraceExceptionId,
+      lastTraceOrderId: get().lastTraceOrderId,
     });
     set({ parkingOrders });
   },
@@ -178,6 +266,11 @@ export const useAppStore = create<AppState>((set, get) => ({
       monthlyCards: get().monthlyCards,
       exceptionOrders: get().exceptionOrders,
       parkingSpaces: get().parkingSpaces,
+      selectedBuildingId: get().selectedBuildingId,
+      selectedFloor: get().selectedFloor,
+      searchPlate: get().searchPlate,
+      lastTraceExceptionId: get().lastTraceExceptionId,
+      lastTraceOrderId: get().lastTraceOrderId,
     });
     set({ parkingOrders });
   },
@@ -186,16 +279,27 @@ export const useAppStore = create<AppState>((set, get) => ({
     const exceptionOrders = get().exceptionOrders.map((e) =>
       e.id === id ? { ...e, status, assignee: assignee ?? e.assignee } : e
     );
+    const lastTraceExceptionId = status === 'resolved' && get().lastTraceExceptionId === id
+      ? null
+      : get().lastTraceExceptionId;
+    if (status === 'resolved' && get().lastTraceExceptionId === id) {
+      set({ lastTraceExceptionId: null });
+    }
     savePersisted({
       parkingOrders: get().parkingOrders,
       monthlyCards: get().monthlyCards,
       exceptionOrders,
       parkingSpaces: get().parkingSpaces,
+      selectedBuildingId: get().selectedBuildingId,
+      selectedFloor: get().selectedFloor,
+      searchPlate: get().searchPlate,
+      lastTraceExceptionId,
+      lastTraceOrderId: get().lastTraceOrderId,
     });
     set({ exceptionOrders });
   },
 
-  correctExceptionPlate: (id, plateNumber) => {
+  correctExceptionPlate: (id, plateNumber, matchedOrderId) => {
     let exceptionOrders = get().exceptionOrders.map((e) =>
       e.id === id ? { ...e, plateNumber } : e
     );
@@ -204,8 +308,22 @@ export const useAppStore = create<AppState>((set, get) => ({
     let matchingOrderId: string | undefined;
 
     const exc = exceptionOrders.find((e) => e.id === id);
+    if (matchedOrderId) {
+      exceptionOrders = exceptionOrders.map(e => e.id === id ? { ...e, orderId: matchedOrderId } : e);
+      matchingOrderId = matchedOrderId;
+      parkingOrders = parkingOrders.map((o) => {
+        if (o.id !== matchedOrderId) return o;
+        let updated: ParkingOrder = { ...o, plateNumber };
+        updated = addLog(updated, {
+          action: 'plate_correct',
+          operator: CURRENT_OPERATOR,
+          detail: `修正车牌: ${plateNumber}`,
+        });
+        return updated;
+      });
+    }
     if (exc) {
-      if (exc.orderId) {
+      if (exc.orderId && !matchedOrderId) {
         matchingOrderId = exc.orderId;
         parkingOrders = parkingOrders.map((o) => {
           if (o.id !== exc.orderId) return o;
@@ -249,7 +367,24 @@ export const useAppStore = create<AppState>((set, get) => ({
       e.id === id ? { ...e, status: 'processing' as const, orderId: matchingOrderId ?? e.orderId } : e
     );
 
-    savePersisted({ parkingOrders, monthlyCards: get().monthlyCards, exceptionOrders, parkingSpaces });
+    if (matchingOrderId) {
+      set({
+        lastTraceExceptionId: id,
+        lastTraceOrderId: matchingOrderId,
+      });
+    }
+
+    savePersisted({
+      parkingOrders,
+      monthlyCards: get().monthlyCards,
+      exceptionOrders,
+      parkingSpaces,
+      selectedBuildingId: get().selectedBuildingId,
+      selectedFloor: get().selectedFloor,
+      searchPlate: get().searchPlate,
+      lastTraceExceptionId: matchingOrderId ? id : get().lastTraceExceptionId,
+      lastTraceOrderId: matchingOrderId ?? get().lastTraceOrderId,
+    });
     set({ exceptionOrders, parkingOrders, parkingSpaces });
   },
 
@@ -266,6 +401,11 @@ export const useAppStore = create<AppState>((set, get) => ({
       monthlyCards,
       exceptionOrders: get().exceptionOrders,
       parkingSpaces: get().parkingSpaces,
+      selectedBuildingId: get().selectedBuildingId,
+      selectedFloor: get().selectedFloor,
+      searchPlate: get().searchPlate,
+      lastTraceExceptionId: get().lastTraceExceptionId,
+      lastTraceOrderId: get().lastTraceOrderId,
     });
     set({ monthlyCards });
   },
@@ -309,6 +449,11 @@ export const useAppStore = create<AppState>((set, get) => ({
       monthlyCards,
       exceptionOrders: get().exceptionOrders,
       parkingSpaces: get().parkingSpaces,
+      selectedBuildingId: get().selectedBuildingId,
+      selectedFloor: get().selectedFloor,
+      searchPlate: get().searchPlate,
+      lastTraceExceptionId: get().lastTraceExceptionId,
+      lastTraceOrderId: get().lastTraceOrderId,
     });
     set({ monthlyCards });
     return resultRecord;
@@ -321,6 +466,11 @@ export const useAppStore = create<AppState>((set, get) => ({
       monthlyCards,
       exceptionOrders: get().exceptionOrders,
       parkingSpaces: get().parkingSpaces,
+      selectedBuildingId: get().selectedBuildingId,
+      selectedFloor: get().selectedFloor,
+      searchPlate: get().searchPlate,
+      lastTraceExceptionId: get().lastTraceExceptionId,
+      lastTraceOrderId: get().lastTraceOrderId,
     });
     set({ monthlyCards });
   },
@@ -335,6 +485,11 @@ export const useAppStore = create<AppState>((set, get) => ({
       monthlyCards,
       exceptionOrders: get().exceptionOrders,
       parkingSpaces: get().parkingSpaces,
+      selectedBuildingId: get().selectedBuildingId,
+      selectedFloor: get().selectedFloor,
+      searchPlate: get().searchPlate,
+      lastTraceExceptionId: get().lastTraceExceptionId,
+      lastTraceOrderId: get().lastTraceOrderId,
     });
     set({ monthlyCards });
   },
@@ -346,6 +501,11 @@ export const useAppStore = create<AppState>((set, get) => ({
       monthlyCards: mockMonthlyCards,
       exceptionOrders: mockExceptionOrders,
       parkingSpaces: mockParkingSpaces,
+      selectedBuildingId: null,
+      selectedFloor: null,
+      searchPlate: '',
+      lastTraceExceptionId: null,
+      lastTraceOrderId: null,
     });
   },
 }));

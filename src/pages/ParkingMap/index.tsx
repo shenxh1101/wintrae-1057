@@ -1,4 +1,5 @@
 import { useState, useMemo, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useAppStore } from '@/store';
 import BaseModal from '@/components/Modal/BaseModal';
 import {
@@ -8,14 +9,16 @@ import {
   formatCurrency,
   calcFee,
 } from '@/utils';
-import { Search, MapPin, Car, X } from 'lucide-react';
-import type { ParkingSpace } from '@/types';
+import { Search, MapPin, Car, X, AlertTriangle } from 'lucide-react';
+import type { ParkingSpace, ExceptionOrder } from '@/types';
 import dayjs from 'dayjs';
 
 export default function ParkingMap() {
+  const navigate = useNavigate();
   const {
     buildings,
     parkingSpaces,
+    exceptionOrders,
     selectedBuildingId,
     selectedFloor,
     setSelectedBuilding,
@@ -26,6 +29,13 @@ export default function ParkingMap() {
 
   const [selectedSpace, setSelectedSpace] = useState<ParkingSpace | null>(null);
   const [tooltipSpace, setTooltipSpace] = useState<ParkingSpace | null>(null);
+
+  const getRelatedException = (space: ParkingSpace): ExceptionOrder | undefined => {
+    return exceptionOrders.find((e) =>
+      e.spaceNo === space.spaceNo &&
+      (e.status === 'pending' || e.status === 'processing')
+    );
+  };
 
   const currentBuilding = buildings.find((b) => b.id === selectedBuildingId);
 
@@ -189,17 +199,25 @@ export default function ParkingMap() {
             {filteredSpaces.map((space) => {
               const cfg = spaceStatusMap[space.status];
               const highlight = isHighlighted(space);
+              const relatedException = getRelatedException(space);
               return (
                 <div
                   key={space.id}
                   className={`relative w-16 h-12 rounded border-2 flex items-center justify-center text-xs font-medium cursor-pointer transition-all hover:scale-105 hover:shadow-md ${cfg.bg} ${
                     highlight ? 'ring-2 ring-yellow-400 ring-offset-1 animate-pulse-slow' : ''
+                  } ${
+                    relatedException ? 'ring-2 ring-red-500 ring-offset-1' : ''
                   }`}
                   onClick={() => setSelectedSpace(space)}
                   onMouseEnter={() => setTooltipSpace(space)}
                   onMouseLeave={() => setTooltipSpace(null)}
                 >
                   <span className={cfg.color}>{space.spaceNo.split('-')[1]}</span>
+                  {relatedException && (
+                    <div className="absolute -top-1 -right-1 w-4 h-4 bg-red-500 rounded-full flex items-center justify-center">
+                      <AlertTriangle size={10} className="text-white" />
+                    </div>
+                  )}
                   {tooltipSpace?.id === space.id && (
                     <div className="absolute z-20 bottom-full left-1/2 -translate-x-1/2 mb-2 px-3 py-2 bg-gray-900 text-white text-xs rounded-md shadow-lg whitespace-nowrap pointer-events-none">
                       <div className="font-semibold mb-1">{space.spaceNo}</div>
@@ -210,6 +228,11 @@ export default function ParkingMap() {
                       {space.enterTime && (
                         <div className="text-gray-300">
                           已停: {formatDuration(getDuration(space.enterTime))}
+                        </div>
+                      )}
+                      {relatedException && (
+                        <div className="text-red-400 font-medium">
+                          ⚠️ 关联异常: {relatedException.id}
                         </div>
                       )}
                       <div className="absolute top-full left-1/2 -translate-x-1/2 border-4 border-transparent border-t-gray-900" />
@@ -232,6 +255,7 @@ export default function ParkingMap() {
           const cfg = spaceStatusMap[selectedSpace.status];
           const duration = getDuration(selectedSpace.enterTime);
           const fee = calcFee(duration);
+          const relatedException = getRelatedException(selectedSpace);
           return (
             <div className="space-y-4">
               <div className="flex items-center justify-between pb-3 border-b border-gray-100">
@@ -267,6 +291,26 @@ export default function ParkingMap() {
                     {selectedSpace.enterTime ? formatDuration(duration) : '-'}
                   </span>
                 </div>
+
+                {relatedException && (
+                  <div className="flex justify-between items-center pt-2 border-t border-gray-100">
+                    <span className="text-sm text-gray-500">关联异常</span>
+                    <span
+                      className="text-sm font-medium text-red-600 cursor-pointer hover:underline"
+                      onClick={() => {
+                        if (selectedSpace.plateNumber) {
+                          setSearchPlate(selectedSpace.plateNumber);
+                        }
+                        if (selectedSpace.buildingId) {
+                          setSelectedBuilding(selectedSpace.buildingId);
+                        }
+                        navigate('/exceptions');
+                      }}
+                    >
+                      {relatedException.id}（点击跳转）
+                    </span>
+                  </div>
+                )}
 
                 <div className="flex justify-between items-center pt-2 border-t border-gray-100">
                   <span className="text-sm text-gray-500">预计费用</span>

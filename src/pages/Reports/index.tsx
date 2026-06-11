@@ -17,8 +17,17 @@ import StatCard from '@/components/Card/StatCard';
 import DataTable from '@/components/Table/DataTable';
 import BaseModal from '@/components/Modal/BaseModal';
 import { useAppStore } from '@/store';
-import { formatCurrency, formatDuration, paymentMethodMap, orderStatusMap } from '@/utils';
-import type { RevenueSummary, ParkingOrder, PaymentMethod } from '@/types';
+import { formatCurrency, formatDuration, paymentMethodMap, orderStatusMap, cardTypeMap, formatDate } from '@/utils';
+import type { RevenueSummary, ParkingOrder, PaymentMethod, RenewalRecord, CardType } from '@/types';
+
+type RenewalRecordWithCardInfo = RenewalRecord & {
+  plateNumber: string;
+  ownerName: string;
+  cardType: CardType;
+  buildingName: string;
+  lotId?: string;
+  lotName?: string;
+};
 
 type TimeRange = 'today' | '7days' | '30days' | 'custom';
 
@@ -30,7 +39,7 @@ const TIME_PRESETS: { key: TimeRange; label: string }[] = [
 ];
 
 export default function Reports() {
-  const { revenueSummary, buildings, dashboardStats, parkingOrders, parkingSpaces, parkingLots } = useAppStore();
+  const { buildings, dashboardStats, parkingOrders, parkingSpaces, parkingLots, monthlyCards } = useAppStore();
   const [timeRange, setTimeRange] = useState<TimeRange>('7days');
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
@@ -41,6 +50,12 @@ export default function Reports() {
   const [drillLotId, setDrillLotId] = useState('');
   const [drillBuildingId, setDrillBuildingId] = useState('');
   const [drillPaymentMethod, setDrillPaymentMethod] = useState('');
+  const [drillOrdersData, setDrillOrdersData] = useState<ParkingOrder[]>([]);
+
+  const [monthlyDrillModal, setMonthlyDrillModal] = useState<{ open: boolean; date: string | null }>({ open: false, date: null });
+  const [monthlyDrillLotId, setMonthlyDrillLotId] = useState('');
+  const [monthlyDrillBuildingId, setMonthlyDrillBuildingId] = useState('');
+  const [filteredOrders, setFilteredOrders] = useState<ParkingOrder[]>([]);
 
   const lotName = useMemo(() => {
     if (!lotId) return '';
@@ -71,13 +86,6 @@ export default function Reports() {
       case 'custom': start = startDate ? dayjs(startDate).startOf('day') : dayjs(0); end = endDate ? dayjs(endDate).endOf('day') : dayjs(); break;
     }
 
-    if (!buildingId && !lotId) {
-      return revenueSummary.filter(d => {
-        const date = dayjs(d.date);
-        return !date.isBefore(start) && !date.isAfter(end);
-      });
-    }
-
     const filtered = parkingOrders.filter(o => {
       const enterDate = dayjs(o.enterTime);
       if (enterDate.isBefore(start) || enterDate.isAfter(end)) return false;
@@ -86,7 +94,9 @@ export default function Reports() {
       return true;
     });
 
-    const grouped = new Map<string, typeof filtered>();
+    setFilteredOrders(filtered);
+
+    const grouped = new Map<string, ParkingOrder[]>();
     filtered.forEach(o => {
       const dateKey = dayjs(o.enterTime).format('YYYY-MM-DD');
       if (!grouped.has(dateKey)) grouped.set(dateKey, []);
@@ -106,7 +116,7 @@ export default function Reports() {
     });
 
     return result;
-  }, [revenueSummary, parkingOrders, timeRange, startDate, endDate, lotId, buildingId, buildingName]);
+  }, [parkingOrders, timeRange, startDate, endDate, lotId, buildingId, buildingName]);
 
   const totals = useMemo(() => {
     const totalRevenue = filteredData.reduce((s, d) => s + d.totalRevenue, 0);
@@ -131,30 +141,14 @@ export default function Reports() {
   }, [filteredData, dashboardStats, lotId, buildingId, parkingSpaces, buildings]);
 
   const hourlyData = useMemo(() => {
-    let start: dayjs.Dayjs, end: dayjs.Dayjs;
-    switch (timeRange) {
-      case 'today': start = dayjs().startOf('day'); end = dayjs().endOf('day'); break;
-      case '7days': start = dayjs().subtract(6, 'day').startOf('day'); end = dayjs().endOf('day'); break;
-      case '30days': start = dayjs().subtract(29, 'day').startOf('day'); end = dayjs().endOf('day'); break;
-      case 'custom': start = startDate ? dayjs(startDate).startOf('day') : dayjs(0); end = endDate ? dayjs(endDate).endOf('day') : dayjs(); break;
-    }
-
-    const relatedOrders = parkingOrders.filter(o => {
-      const enterDate = dayjs(o.enterTime);
-      if (enterDate.isBefore(start) || enterDate.isAfter(end)) return false;
-      if (lotId && o.lotId !== lotId) return false;
-      if (buildingId && o.buildingName !== buildingName) return false;
-      return true;
-    });
-
     const hourCounts = new Array(24).fill(0);
-    relatedOrders.forEach(o => {
+    filteredOrders.forEach(o => {
       const hour = dayjs(o.enterTime).hour();
       hourCounts[hour]++;
     });
 
     return hourCounts;
-  }, [parkingOrders, timeRange, startDate, endDate, lotId, buildingId, buildingName]);
+  }, [filteredOrders]);
 
   const drillFilteredBuildings = useMemo(() => {
     if (!drillLotId) return buildings;
@@ -173,16 +167,13 @@ export default function Reports() {
 
   const drillOrders = useMemo(() => {
     if (!drillModal.date) return [] as ParkingOrder[];
-    const targetDate = drillModal.date;
-    return parkingOrders.filter(o => {
-      const orderDate = dayjs(o.enterTime).format('YYYY-MM-DD');
-      if (orderDate !== targetDate) return false;
+    return drillOrdersData.filter(o => {
+      if (drillPaymentMethod && o.paymentMethod !== drillPaymentMethod) return false;
       if (drillLotId && o.lotId !== drillLotId) return false;
       if (drillBuildingId && o.buildingName !== drillBuildingName) return false;
-      if (drillPaymentMethod && o.paymentMethod !== drillPaymentMethod) return false;
       return true;
     });
-  }, [parkingOrders, drillModal.date, drillLotId, drillBuildingId, drillPaymentMethod, drillBuildingName]);
+  }, [drillOrdersData, drillModal.date, drillLotId, drillBuildingId, drillPaymentMethod, drillBuildingName]);
 
   const drillTotals = useMemo(() => {
     const orderCount = drillOrders.length;
@@ -193,6 +184,14 @@ export default function Reports() {
   }, [drillOrders]);
 
   const openDrillModal = (date: string) => {
+    const dayOrders = parkingOrders.filter(o => {
+      const orderDate = dayjs(o.enterTime).format('YYYY-MM-DD');
+      if (orderDate !== date) return false;
+      if (lotId && o.lotId !== lotId) return false;
+      if (buildingId && o.buildingName !== buildingName) return false;
+      return true;
+    });
+    setDrillOrdersData(dayOrders);
     setDrillModal({ open: true, date });
     setDrillLotId(lotId);
     setDrillBuildingId(buildingId);
@@ -202,6 +201,111 @@ export default function Reports() {
   const handleDrillLotChange = (newLotId: string) => {
     setDrillLotId(newLotId);
     setDrillBuildingId('');
+  };
+
+  const dataVerification = useMemo(() => {
+    if (!drillModal.date) return null;
+    const outerTotal = filteredData.find(d => d.date === drillModal.date)?.totalRevenue ?? 0;
+    const detailTotal = drillOrdersData.reduce((s, o) => s + o.totalFee, 0);
+    const isConsistent = Math.abs(outerTotal - detailTotal) < 0.01;
+    return { outerTotal, detailTotal, isConsistent };
+  }, [drillModal.date, filteredData, drillOrdersData]);
+
+  const monthlyDrillFilteredBuildings = useMemo(() => {
+    if (!monthlyDrillLotId) return buildings;
+    return buildings.filter(b => b.lotId === monthlyDrillLotId);
+  }, [monthlyDrillLotId, buildings]);
+
+  const monthlyDrillLotName = useMemo(() => {
+    if (!monthlyDrillLotId) return '';
+    return parkingLots.find(l => l.id === monthlyDrillLotId)?.name ?? '';
+  }, [monthlyDrillLotId, parkingLots]);
+
+  const monthlyDrillBuildingName = useMemo(() => {
+    if (!monthlyDrillBuildingId) return '';
+    return buildings.find(b => b.id === monthlyDrillBuildingId)?.name ?? '';
+  }, [monthlyDrillBuildingId, buildings]);
+
+  const renewalRecordsWithCardInfo = useMemo(() => {
+    const records: RenewalRecordWithCardInfo[] = [];
+    monthlyCards.forEach(card => {
+      if (card.renewalRecords) {
+        card.renewalRecords.forEach(record => {
+          records.push({
+            ...record,
+            plateNumber: card.plateNumber,
+            ownerName: card.ownerName,
+            cardType: card.cardType,
+            buildingName: card.buildingName,
+            lotId: card.lotId,
+            lotName: card.lotName,
+          });
+        });
+      }
+    });
+    return records;
+  }, [monthlyCards]);
+
+  const monthlyDrillRecords = useMemo(() => {
+    if (!monthlyDrillModal.date) return [];
+    const targetDate = monthlyDrillModal.date;
+    return renewalRecordsWithCardInfo.filter(r => {
+      const recordDate = dayjs(r.time).format('YYYY-MM-DD');
+      if (recordDate !== targetDate) return false;
+      if (monthlyDrillLotId && r.lotId !== monthlyDrillLotId) return false;
+      if (monthlyDrillBuildingId && r.buildingName !== monthlyDrillBuildingName) return false;
+      return true;
+    });
+  }, [renewalRecordsWithCardInfo, monthlyDrillModal.date, monthlyDrillLotId, monthlyDrillBuildingId, monthlyDrillBuildingName]);
+
+  const monthlyDrillTotals = useMemo(() => {
+    const recordCount = monthlyDrillRecords.length;
+    const totalAmount = monthlyDrillRecords.reduce((s, r) => s + r.amount, 0);
+    const uniqueCardIds = new Set(monthlyDrillRecords.map(r => r.cardId));
+    const cardCount = uniqueCardIds.size;
+    const avgPrice = recordCount > 0 ? totalAmount / recordCount : 0;
+    return { recordCount, totalAmount, cardCount, avgPrice };
+  }, [monthlyDrillRecords]);
+
+  const openMonthlyDrillModal = (date: string) => {
+    setMonthlyDrillModal({ open: true, date });
+    setMonthlyDrillLotId(lotId);
+    setMonthlyDrillBuildingId(buildingId);
+  };
+
+  const handleMonthlyDrillLotChange = (newLotId: string) => {
+    setMonthlyDrillLotId(newLotId);
+    setMonthlyDrillBuildingId('');
+  };
+
+  const handleMonthlyDrillExport = () => {
+    if (!monthlyDrillModal.date) return;
+    const dateStr = monthlyDrillModal.date;
+    const filterInfo = `筛选范围: ${monthlyDrillLotName || '全部车场'} / ${monthlyDrillBuildingName || '全部楼栋'} / ${dateStr}`;
+    const headers = ['续费时间', '车牌号', '车主', '卡类型', '续费时长', '金额', '原到期日', '新到期日', '操作员'];
+    const rows = monthlyDrillRecords.map(r => [
+      dayjs(r.time).format('YYYY-MM-DD HH:mm:ss'),
+      r.plateNumber,
+      r.ownerName,
+      cardTypeMap[r.cardType as keyof typeof cardTypeMap].label,
+      `${r.days}天`,
+      r.amount,
+      formatDate(r.previousEndTime),
+      formatDate(r.newEndTime),
+      r.operator,
+    ]);
+    const csv = [[filterInfo], headers, ...rows].map(r => r.map(c => `"${String(c).replace(/"/g, '""')}"`).join(',')).join('\n');
+    const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    let fileName = `renewals_${dateStr}`;
+    if (monthlyDrillLotName) fileName += `_${monthlyDrillLotName}`;
+    if (monthlyDrillBuildingName) fileName += `_${monthlyDrillBuildingName}`;
+    fileName += '.csv';
+    link.download = fileName;
+    link.click();
+    URL.revokeObjectURL(url);
   };
 
   const statCards = [
@@ -228,8 +332,8 @@ export default function Reports() {
   const hourlyOption = {
     tooltip: {
       trigger: 'axis',
-      formatter: (params: any) => {
-        const p = Array.isArray(params) ? params[0] : params;
+      formatter: (params: unknown) => {
+        const p = Array.isArray(params) ? params[0] as { axisValue: string; value: number } : params as { axisValue: string; value: number };
         return `${p.axisValue}<br/>订单数: ${p.value}单`;
       },
     },
@@ -294,7 +398,7 @@ export default function Reports() {
     const link = document.createElement('a');
     link.href = url;
     let fileName = `orders_${dateStr}`;
-    if (drillLotId) fileName += `_${drillLotId}`;
+    if (drillLotName) fileName += `_${drillLotName}`;
     if (drillBuildingName) fileName += `_${drillBuildingName}`;
     fileName += '.csv';
     link.download = fileName;
@@ -313,7 +417,14 @@ export default function Reports() {
       </button>
     ) },
     { key: 'tempRevenue', title: '临停收入', width: '120px', align: 'right' as const, render: (r: RevenueSummary) => formatCurrency(r.tempRevenue) },
-    { key: 'monthlyRevenue', title: '月卡收入', width: '120px', align: 'right' as const, render: (r: RevenueSummary) => formatCurrency(r.monthlyRevenue) },
+    { key: 'monthlyRevenue', title: '月卡收入', width: '120px', align: 'right' as const, render: (r: RevenueSummary) => (
+      <button
+        className="cursor-pointer font-medium text-amber-600 hover:text-amber-700 hover:underline transition-colors"
+        onClick={() => openMonthlyDrillModal(r.date)}
+      >
+        {formatCurrency(r.monthlyRevenue)}
+      </button>
+    ) },
     { key: 'totalRevenue', title: '总收入', width: '120px', align: 'right' as const, render: (r: RevenueSummary) => (
       <button
         className="cursor-pointer font-semibold text-accent-600 hover:text-accent-700 hover:underline transition-colors"
@@ -339,6 +450,18 @@ export default function Reports() {
       const s = orderStatusMap[r.status];
       return <span className={`inline-flex items-center rounded-md px-2 py-0.5 text-xs font-medium ${s.bg} ${s.color}`}>{s.label}</span>;
     } },
+  ];
+
+  const monthlyDrillColumns = [
+    { key: 'time', title: '续费时间', width: '170px', render: (r: RenewalRecordWithCardInfo) => dayjs(r.time).format('YYYY-MM-DD HH:mm:ss') },
+    { key: 'plateNumber', title: '车牌号', width: '100px' },
+    { key: 'ownerName', title: '车主', width: '100px' },
+    { key: 'cardType', title: '卡类型', width: '80px', render: (r: RenewalRecordWithCardInfo) => cardTypeMap[r.cardType].label },
+    { key: 'days', title: '续费时长', width: '90px', render: (r: RenewalRecordWithCardInfo) => `${r.days}天` },
+    { key: 'amount', title: '金额', width: '90px', align: 'right' as const, render: (r: RenewalRecordWithCardInfo) => formatCurrency(r.amount) },
+    { key: 'previousEndTime', title: '原到期日', width: '110px', render: (r: RenewalRecordWithCardInfo) => formatDate(r.previousEndTime) },
+    { key: 'newEndTime', title: '新到期日', width: '110px', render: (r: RenewalRecordWithCardInfo) => formatDate(r.newEndTime) },
+    { key: 'operator', title: '操作员', width: '90px' },
   ];
 
   return (
@@ -452,6 +575,12 @@ export default function Reports() {
             </span>
           </div>
 
+          {dataVerification && (
+            <div className={`text-sm font-medium p-3 rounded-md ${dataVerification.isConsistent ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-600'}`}>
+              数据核验：外层 {formatCurrency(dataVerification.outerTotal)} = 明细合计 {formatCurrency(dataVerification.detailTotal)}，{dataVerification.isConsistent ? '一致 ✓' : '不一致 ✗'}
+            </div>
+          )}
+
           <div className="max-h-96 overflow-auto">
             <DataTable<ParkingOrder> columns={drillColumns} data={drillOrders} rowKey={r => r.id} emptyText="暂无订单数据" />
           </div>
@@ -472,6 +601,65 @@ export default function Reports() {
             <div>
               <span className="text-gray-500">未付总额：</span>
               <span className="font-semibold text-red-600">{formatCurrency(drillTotals.unpaidFee)}</span>
+            </div>
+          </div>
+        </div>
+      </BaseModal>
+
+      <BaseModal
+        open={monthlyDrillModal.open}
+        title={`${monthlyDrillModal.date || ''} 月卡续费明细`}
+        size="lg"
+        onClose={() => setMonthlyDrillModal({ open: false, date: null })}
+      >
+        <div className="space-y-4">
+          <div className="flex flex-wrap items-center gap-3">
+            <select className="input w-auto" value={monthlyDrillLotId} onChange={e => handleMonthlyDrillLotChange(e.target.value)}>
+              <option value="">全部车场</option>
+              {parkingLots.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}
+            </select>
+            <select className="input w-auto" value={monthlyDrillBuildingId} onChange={e => setMonthlyDrillBuildingId(e.target.value)}>
+              <option value="">全部楼栋</option>
+              {monthlyDrillFilteredBuildings.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
+            </select>
+            <div className="flex-1" />
+            <button className="btn btn-accent" onClick={handleMonthlyDrillExport}>
+              <Download size={16} className="mr-1.5" />导出明细
+            </button>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2 text-sm">
+            <span className="text-gray-500">当前筛选：</span>
+            <span className="inline-flex items-center rounded-md bg-amber-50 px-2.5 py-1 text-xs font-medium text-amber-700">
+              <CreditCard size={12} className="mr-1" />
+              车场: {monthlyDrillLotName || '全部车场'}
+            </span>
+            <span className="text-gray-300">|</span>
+            <span className="inline-flex items-center rounded-md bg-amber-50 px-2.5 py-1 text-xs font-medium text-amber-700">
+              楼栋: {monthlyDrillBuildingName || '全部楼栋'}
+            </span>
+          </div>
+
+          <div className="max-h-96 overflow-auto">
+            <DataTable<RenewalRecordWithCardInfo> columns={monthlyDrillColumns} data={monthlyDrillRecords} rowKey={r => r.id} emptyText="暂无续费记录" />
+          </div>
+
+          <div className="flex flex-wrap items-center gap-6 pt-3 border-t border-gray-100 text-sm">
+            <div>
+              <span className="text-gray-500">续费单数：</span>
+              <span className="font-semibold text-gray-800">{monthlyDrillTotals.recordCount} 单</span>
+            </div>
+            <div>
+              <span className="text-gray-500">总金额：</span>
+              <span className="font-semibold text-amber-600">{formatCurrency(monthlyDrillTotals.totalAmount)}</span>
+            </div>
+            <div>
+              <span className="text-gray-500">续费月卡数：</span>
+              <span className="font-semibold text-gray-800">{monthlyDrillTotals.cardCount} 张</span>
+            </div>
+            <div>
+              <span className="text-gray-500">平均单价：</span>
+              <span className="font-semibold text-gray-800">{formatCurrency(monthlyDrillTotals.avgPrice)}</span>
             </div>
           </div>
         </div>
